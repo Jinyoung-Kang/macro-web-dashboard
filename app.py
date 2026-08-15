@@ -123,7 +123,7 @@ setInterval(updateLiveClocks, 1000);
 """
 
 # ==============================================================================
-# MENU 1: 거시경제 매크로 대시보드 (전체 복원 완료)
+# MENU 1: 거시경제 매크로 대시보드
 # ==============================================================================
 if menu_selection == "📊 거시경제 매크로 지표":
     MACRO_CATEGORIES = {
@@ -168,8 +168,9 @@ if menu_selection == "📊 거시경제 매크로 지표":
         except Exception:
             return None
 
+    # 범용 FRED 시리즈 수집 함수 (API Key 우선 + 웹 Direct 다운로드 폴백)
     @st.cache_data(ttl=3600, show_spinner=False)
-    def fetch_fred_hy_spread():
+    def fetch_fred_series(series_id: str):
         api_key = None
         try:
             if hasattr(st, "secrets") and "fred" in st.secrets:
@@ -183,15 +184,15 @@ if menu_selection == "📊 거시경제 매크로 지표":
 
         if api_key:
             try:
-                url = f"https://api.stlouisfed.org/fred/series/observations?series_id=BAMLH0A0HYM2&api_key={api_key}&file_type=json"
+                url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json"
                 r = requests.get(url, timeout=10, verify=False)
                 if r.status_code == 200:
                     data = r.json().get('observations', [])
                     if data:
                         df = pd.DataFrame(data)[['date', 'value']]
-                        df.rename(columns={'date': 'DATE', 'value': 'BAMLH0A0HYM2'}, inplace=True)
+                        df.rename(columns={'date': 'DATE', 'value': series_id}, inplace=True)
                         df['DATE'] = pd.to_datetime(df['DATE'])
-                        df['BAMLH0A0HYM2'] = pd.to_numeric(df['BAMLH0A0HYM2'], errors='coerce')
+                        df[series_id] = pd.to_numeric(df[series_id], errors='coerce')
                         df = df.dropna().set_index('DATE')
                         if not df.empty:
                             return df
@@ -199,18 +200,18 @@ if menu_selection == "📊 거시경제 매크로 지표":
                 pass
 
         try:
-            url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2"
+            url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Referer": "https://fred.stlouisfed.org/series/BAMLH0A0HYM2"
+                "Referer": f"https://fred.stlouisfed.org/series/{series_id}"
             }
             resp = requests.get(url, headers=headers, timeout=10, verify=False)
-            if resp.status_code == 200 and "BAMLH0A0HYM2" in resp.text:
+            if resp.status_code == 200 and series_id in resp.text:
                 df = pd.read_csv(io.StringIO(resp.text))
                 df['DATE'] = pd.to_datetime(df['DATE'])
-                df['BAMLH0A0HYM2'] = pd.to_numeric(df['BAMLH0A0HYM2'], errors='coerce')
+                df[series_id] = pd.to_numeric(df[series_id], errors='coerce')
                 df = df.dropna().set_index('DATE')
                 if not df.empty:
                     return df
@@ -264,7 +265,18 @@ if menu_selection == "📊 거시경제 매크로 지표":
 
     vix_hist = fetch_ticker_data("^VIX", period="1mo")
     move_hist = fetch_ticker_data("^MOVE", period="1mo")
-    hy_df = fetch_fred_hy_spread()
+    hy_df = fetch_fred_series("BAMLH0A0HYM2")
+    stlfsi_df = fetch_fred_series("STLFSI4")
+    
+    # 3M 금융 CP 스프레드 연산 (3M Financial CP Rate - 3M T-Bill Rate)
+    cp3m_df = fetch_fred_series("RIFSPPFAAD90NBM")
+    tb3m_df = fetch_fred_series("DTB3")
+    cp_spread_df = None
+    if cp3m_df is not None and tb3m_df is not None and not cp3m_df.empty and not tb3m_df.empty:
+        merged_cp = pd.DataFrame({'CP': cp3m_df['RIFSPPFAAD90NBM'], 'TB': tb3m_df['DTB3']}).ffill().dropna()
+        if not merged_cp.empty:
+            merged_cp['CP_SPREAD'] = merged_cp['CP'] - merged_cp['TB']
+            cp_spread_df = merged_cp
 
     def clean_category_title(text: str) -> str:
         return re.sub(r':gray\[(.*)\]', r'\1', text)
@@ -299,7 +311,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
         lines.append("-" * 45)
         lines.append(f"• 10Y-2Y 장단기 금리차    : {curr_spread:>8.2f}%p (전일: {prev_spread:>8.2f}%p) | 전일비 {spread_delta:+.2f}%p")
 
-    lines.append("\n⚡ 신용 및 시장 변동성 지표")
+    lines.append("\n⚡ 신용, 은행권 및 시장 변동성 지표")
     lines.append("-" * 45)
     if vix_hist is not None and len(vix_hist) >= 2:
         v_c, v_p = vix_hist['Close'].iloc[-1], vix_hist['Close'].iloc[-2]
@@ -311,6 +323,14 @@ if menu_selection == "📊 거시경제 매크로 지표":
         h_c, h_p = hy_df['BAMLH0A0HYM2'].iloc[-1], hy_df['BAMLH0A0HYM2'].iloc[-2]
         h_dt = hy_df.index[-1].strftime('%m-%d')
         lines.append(f"• 하이일드 OAS [1일지연 {h_dt}]: {h_c:>8.2f}%p (전일: {h_p:>8.2f}%p) | 전일비 {h_c-h_p:+.2f}%p")
+    if cp_spread_df is not None and len(cp_spread_df) >= 2:
+        cp_c, cp_p = cp_spread_df['CP_SPREAD'].iloc[-1], cp_spread_df['CP_SPREAD'].iloc[-2]
+        cp_dt = cp_spread_df.index[-1].strftime('%m-%d')
+        lines.append(f"• 3M 금융 CP 스프레드 [1일지연 {cp_dt}]: {cp_c:>6.2f}%p (전일: {cp_p:>6.2f}%p) | 전일비 {cp_c-cp_p:+.2f}%p")
+    if stlfsi_df is not None and len(stlfsi_df) >= 2:
+        s_c, s_p = stlfsi_df['STLFSI4'].iloc[-1], stlfsi_df['STLFSI4'].iloc[-2]
+        s_dt = stlfsi_df.index[-1].strftime('%m-%d')
+        lines.append(f"• STLFSI4 스트레스지수 [주간 {s_dt}]: {s_c:>+6.2f} pt (전주: {s_p:>+6.2f} pt) | 전주비 {s_c-s_p:+.2f} pt")
 
     lines.append("\n" + "=" * 55)
     report_text = "\n".join(lines)
@@ -443,10 +463,11 @@ if menu_selection == "📊 거시경제 매크로 지표":
 
     st.divider()
 
-    # 3. 신용 리스크 및 시장 변동성 (Credit & Volatility) 전용 섹션
-    st.subheader("⚡ 신용 리스크 및 시장 변동성 (Credit & Volatility)")
-    st.caption("주식·채권 시장의 가격 변동성과 기업 자금시장의 부도 위험(신용 스프레드)을 종합 모니터링합니다.")
+    # 3. 신용 리스크, 은행권 및 시장 변동성 (Credit & Liquidity Risk) 전용 섹션
+    st.subheader("⚡ 신용 리스크, 은행권 및 시장 변동성 (Credit & Liquidity Risk)")
+    st.caption("주식·채권 가격 변동성, 기업 부도 위험(HY OAS), 글로벌 은행권 단기 자금경색(3M CP) 및 종합 금융스트레스(STLFSI4)를 모니터링합니다.")
 
+    # 상단 3개: 변동성 & 기업 신용
     col_v, col_m, col_h = st.columns(3)
 
     # 1) VIX 카드
@@ -530,35 +551,105 @@ if menu_selection == "📊 거시경제 매크로 지표":
         else:
             st.metric(label="하이일드 스프레드", value="로드 실패")
 
-    # 신용 & 변동성 해석 모델 테이블
-    st.markdown("#### 📖 신용 및 변동성 핵심 해석 기준표")
+    # 하단 2개: 은행권 단기 유동성 & 종합 금융 스트레스
+    col_cp, col_fsi = st.columns(2)
+
+    # 4) 3M 금융 CP 스프레드 카드 (현대판 TED 스프레드)
+    with col_cp:
+        if cp_spread_df is not None and len(cp_spread_df) >= 2:
+            cp_curr = cp_spread_df['CP_SPREAD'].iloc[-1]
+            cp_prev = cp_spread_df['CP_SPREAD'].iloc[-2]
+            cp_date = cp_spread_df.index[-1].strftime('%m-%d')
+            cp_delta = cp_curr - cp_prev
+            
+            if cp_curr < 0.20:
+                cp_status, cp_color = "안정 (Low Risk)", "green"
+            elif cp_curr <= 0.50:
+                cp_status, cp_color = "정상 (Normal)", "blue"
+            elif cp_curr <= 0.80:
+                cp_status, cp_color = "경계 (Caution)", "orange"
+            else:
+                cp_status, cp_color = "자금경색 / 위기 (Crisis)", "red"
+                
+            st.metric(
+                label=f"3M 금융 CP 스프레드 (은행권 자금위험) :gray[[1일 지연 {cp_date} EOD]]",
+                value=f"{cp_curr:.2f} %p",
+                delta=f"{cp_delta:+.2f} %p",
+                help="3개월 AA등급 금융 CP 금리 - 3개월 국채(T-Bill) 금리 차이 (현대판 TED 스프레드 대체 지표)"
+            )
+            st.markdown(f"상태: :{cp_color}[**{cp_status}**] (직전: `{cp_prev:.2f}%p`)")
+        else:
+            st.metric(label="3M 금융 CP 스프레드", value="로드 실패")
+
+    # 5) STLFSI4 금융스트레스지수 카드
+    with col_fsi:
+        if stlfsi_df is not None and len(stlfsi_df) >= 2:
+            fsi_curr = stlfsi_df['STLFSI4'].iloc[-1]
+            fsi_prev = stlfsi_df['STLFSI4'].iloc[-2]
+            fsi_date = stlfsi_df.index[-1].strftime('%m-%d')
+            fsi_delta = fsi_curr - fsi_prev
+            
+            if fsi_curr < 0.0:
+                fsi_status, fsi_color = "안정 (Below Average Stress)", "green"
+            elif fsi_curr <= 0.5:
+                fsi_status, fsi_color = "정상 (Normal Stress)", "blue"
+            elif fsi_curr <= 1.0:
+                fsi_status, fsi_color = "경계 (Elevated Stress)", "orange"
+            else:
+                fsi_status, fsi_color = "시스템 위기 (High Stress / Crisis)", "red"
+                
+            st.metric(
+                label=f"세인트루이스 연준 금융스트레스 (STLFSI4) :gray[[주간 {fsi_date}]]",
+                value=f"{fsi_curr:+.2f} pt",
+                delta=f"{fsi_delta:+.2f} pt",
+                help="세인트루이스 연준이 18개 금융시장 지표(자금, 채권, 주식 등)를 종합 산출한 복합 스트레스 지수 (0 = 역사적 평균)"
+            )
+            st.markdown(f"상태: :{fsi_color}[**{fsi_status}**] (직전: `{fsi_prev:+.2f} pt`)")
+        else:
+            st.metric(label="STLFSI4 금융스트레스지수", value="로드 실패")
+
+    # 신용 & 변동성 & 은행권 위험 핵심 해석 모델 테이블
+    st.markdown("#### 📖 신용, 은행권 및 변동성 핵심 해석 기준표")
     risk_model_table = {
         "지표명 (지연 수준)": [
             "CBOE VIX [15분 지연]", 
             "ICE BofA MOVE [지연/마감]", 
-            "하이일드 스프레드 [1일 지연 EOD]"
+            "하이일드 스프레드 [1일 지연 EOD]",
+            "3M 금융 CP 스프레드 [1일 지연 EOD]",
+            "STLFSI4 금융스트레스지수 [주간]"
         ],
         "정상 / 안정 범위": [
             "15 ~ 20 (15 미만: 과도한 낙관)", 
             "80 ~ 120 (80 미만: 금리 초안정)", 
-            "3.5% ~ 5.0% (3.5% 미만: 유동성 풍부)"
+            "3.5% ~ 5.0% (3.5% 미만: 유동성 풍부)",
+            "0.20%p ~ 0.50%p (0.20%p 미만: 풍부한 단기 유동성)",
+            "0.0 이하 (0.0은 역사적 장기 평균치)"
         ],
         "위험 / 발작 임계치": [
             "30 이상 (패닉 / 급락 / 투매)", 
             "140 이상 (채권 발작 / 긴축 충격)", 
-            "7.0% 이상 (본격 신용경색 / 경기침체)"
+            "7.0% 이상 (본격 신용경색 / 경기침체)",
+            "0.80%p ~ 1.00%p 이상 (단기 자금시장 유동성 경색)",
+            "+1.0 이상 (금융 시스템 충격 및 위기 경보)"
         ],
         "지표의 성격 및 핵심 해석": [
             "주식 시장의 단기 공포 측정기. 급등 시 주가 급락 및 투매 발생 신호.",
             "채권 시장의 공포 지수. 연준 통화정책 불확실성과 유동성 경색에 민감하게 반응.",
-            "한계 기업의 부도 리스크 프리미엄. 경기 침체 진입 시 가장 먼저 급등하는 신용 선행 지표."
+            "한계 기업의 부도 리스크 프리미엄. 경기 침체 진입 시 가장 먼저 급등하는 신용 선행 지표.",
+            "은행·금융기관의 3개월 단기 자금조달 가산금리(현대판 TED 스프레드). 은행권 유동성 위기 발생 시 급등.",
+            "18개 금융시장 지표(자금, 채권, 주식 등)를 종합한 복합 척도. 0보다 크면 스트레스 고조, 1.0 초과 시 시스템 위기."
         ]
     }
     st.dataframe(pd.DataFrame(risk_model_table), use_container_width=True, hide_index=True)
 
-    # 변동성 & 신용 추이 차트 탭
+    # 변동성 & 신용 & 은행권 추이 차트 탭
     st.markdown("#### 📈 위험 지표 상세 과거 추이")
-    risk_tab1, risk_tab2 = st.tabs(["📊 VIX & MOVE 변동성 지수 추이", "📉 하이일드 채권 스프레드 추이"])
+    risk_tab1, risk_tab2, risk_tab3, risk_tab4 = st.tabs([
+        "📊 VIX & MOVE 변동성 지수", 
+        "📉 하이일드 채권 스프레드", 
+        "🏦 3M 금융 CP 스프레드", 
+        "⚠️ STLFSI4 금융스트레스지수"
+    ])
 
     with risk_tab1:
         vix_period = st.selectbox("변동성 지수 기간 선택", ["6mo", "1y", "2y", "5y", "max"], index=1, key="vix_period_sel")
@@ -601,7 +692,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
 
     with risk_tab2:
         if hy_df is not None and not hy_df.empty:
-            hy_period_years = st.selectbox("하이일드 기간 선택", [1, 2, 5, 10], index=2, format_func=lambda x: f"최근 {x}년")
+            hy_period_years = st.selectbox("하이일드 기간 선택", [1, 2, 5, 10], index=2, format_func=lambda x: f"최근 {x}년", key="hy_period_sel")
             cutoff_date = pd.Timestamp.now() - pd.DateOffset(years=hy_period_years)
             filtered_hy = hy_df[hy_df.index >= cutoff_date]
             
@@ -624,128 +715,114 @@ if menu_selection == "📊 거시경제 매크로 지표":
         else:
             st.warning("하이일드 스프레드 데이터를 불러오지 못했습니다.")
 
+    with risk_tab3:
+        if cp_spread_df is not None and not cp_spread_df.empty:
+            cp_period_years = st.selectbox("3M 금융 CP 기간 선택", [1, 2, 5, 10], index=2, format_func=lambda x: f"최근 {x}년", key="cp_period_sel")
+            cutoff_date_cp = pd.Timestamp.now() - pd.DateOffset(years=cp_period_years)
+            filtered_cp = cp_spread_df[cp_spread_df.index >= cutoff_date_cp]
+            
+            fig_cp = go.Figure()
+            fig_cp.add_trace(go.Scatter(
+                x=filtered_cp.index, y=filtered_cp['CP_SPREAD'], mode='lines',
+                name='3M Financial CP Spread (%p)', line=dict(color='#0284C7', width=2),
+                fill='tozeroy', fillcolor='rgba(2, 132, 199, 0.1)'
+            ))
+            fig_cp.add_hline(y=0.50, line_dash="dot", line_color="orange", annotation_text="주의선 (0.50%p)")
+            fig_cp.add_hline(y=0.80, line_dash="dash", line_color="red", annotation_text="위기 경계선 (0.80%p)")
+            fig_cp.update_layout(
+                title=f"3개월 금융 CP 스프레드 추이 (현대판 TED 스프레드, 최근 {cp_period_years}년)",
+                xaxis_title="일자",
+                yaxis_title="스프레드 (%p)",
+                hovermode="x unified",
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_cp, use_container_width=True)
+        else:
+            st.warning("3개월 금융 CP 스프레드 데이터를 불러오지 못했습니다.")
+
+    with risk_tab4:
+        if stlfsi_df is not None and not stlfsi_df.empty:
+            fsi_period_years = st.selectbox("STLFSI4 기간 선택", [1, 2, 5, 10], index=2, format_func=lambda x: f"최근 {x}년", key="fsi_period_sel")
+            cutoff_date_fsi = pd.Timestamp.now() - pd.DateOffset(years=fsi_period_years)
+            filtered_fsi = stlfsi_df[stlfsi_df.index >= cutoff_date_fsi]
+            
+            fig_fsi = go.Figure()
+            fig_fsi.add_trace(go.Scatter(
+                x=filtered_fsi.index, y=filtered_fsi['STLFSI4'], mode='lines',
+                name='St. Louis Fed Financial Stress Index', line=dict(color='#8B5CF6', width=2),
+                fill='tozeroy', fillcolor='rgba(139, 92, 246, 0.1)'
+            ))
+            fig_fsi.add_hline(y=0.0, line_dash="dash", line_color="white", opacity=0.8, annotation_text="평균 기준선 (0.0 pt)")
+            fig_fsi.add_hline(y=1.0, line_dash="dash", line_color="red", annotation_text="시스템 위기 경보선 (+1.0 pt)")
+            fig_fsi.update_layout(
+                title=f"세인트루이스 연준 금융스트레스지수 (STLFSI4) 추이 (최근 {fsi_period_years}년)",
+                xaxis_title="일자",
+                yaxis_title="스트레스 지수 (pt)",
+                hovermode="x unified",
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_fsi, use_container_width=True)
+        else:
+            st.warning("STLFSI4 금융스트레스지수 데이터를 불러오지 못했습니다.")
+
     st.divider()
 
-    # 4. 개별 지표 상세 차트 섹션
+    # 4. 개별 지표 상세 차트
     st.subheader("지표별 기간별 단독 차트")
-
     ALL_TICKERS = {}
     for cat in MACRO_CATEGORIES.values():
         ALL_TICKERS.update(cat)
 
     c1, c2 = st.columns([2, 1])
     with c1:
-        selected_name = st.selectbox(
-            "조회할 단일 지표 선택", 
-            list(ALL_TICKERS.keys()),
-            format_func=clean_tag_ui
-        )
+        selected_name = st.selectbox("조회할 단일 지표 선택", list(ALL_TICKERS.keys()), format_func=clean_tag_ui)
     with c2:
         period = st.selectbox("조회 기간", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3, key="single_period")
 
     selected_symbol = ALL_TICKERS[selected_name]
-
-    try:
-        df = fetch_ticker_data(selected_symbol, period=period)
-        if df is not None and not df.empty:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=df.index, 
-                y=df['Close'], 
-                mode='lines', 
-                name=clean_tag_ui(selected_name),
-                line=dict(color='#0066FF', width=2)
-            ))
-            fig.update_layout(
-                title=f"{clean_tag_ui(selected_name)} ({selected_symbol}) 상세 차트",
-                xaxis_title="일자",
-                yaxis_title="수치/가격",
-                hovermode="x unified",
-                margin=dict(l=20, r=20, t=40, b=20)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("데이터를 불러오지 못했습니다.")
-    except Exception:
-        st.warning("차트 데이터를 불러오는 중 오류가 발생했습니다.")
+    df = fetch_ticker_data(selected_symbol, period=period)
+    if df is not None and not df.empty:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name=clean_tag_ui(selected_name), line=dict(color='#0066FF', width=2)))
+        fig.update_layout(title=f"{clean_tag_ui(selected_name)} ({selected_symbol}) 상세 차트", xaxis_title="일자", yaxis_title="수치/가격", hovermode="x unified", margin=dict(l=20, r=20, t=40, b=20))
+        st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
 
-    # 5. 다중 지표 오버레이 비교 차트 섹션
+    # 5. 다중 지표 오버레이 비교 차트
     st.subheader("🔀 다중 지표 오버레이 비교 차트")
     st.caption("서로 다른 지표들을 한 차트 위에 겹쳐서 추세 및 상관관계를 비교합니다.")
 
     col_comp1, col_comp2, col_comp3 = st.columns([2, 1, 1])
-
     with col_comp1:
-        multi_selected = st.multiselect(
-            "비교할 지표 선택 (다중 선택 가능)",
-            options=list(ALL_TICKERS.keys()),
-            default=["원/달러 (USD/KRW) :gray[[실시간]]", "달러 인덱스 (DXY) :gray[[실시간]]"],
-            format_func=clean_tag_ui
-        )
-
+        multi_selected = st.multiselect("비교할 지표 선택 (다중 선택 가능)", options=list(ALL_TICKERS.keys()), default=["원/달러 (USD/KRW) :gray[[실시간]]", "달러 인덱스 (DXY) :gray[[실시간]]"], format_func=clean_tag_ui)
     with col_comp2:
-        multi_period = st.selectbox(
-            "비교 기간",
-            options=["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"],
-            index=3,
-            key="multi_period"
-        )
-
+        multi_period = st.selectbox("비교 기간", options=["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3, key="multi_period")
     with col_comp3:
-        norm_mode = st.radio(
-            "비교 방식",
-            options=["수익률/변동률(%) 기준", "실제 수치(절대값) 기준"],
-            index=0,
-            help="단위가 다른 지표(예: 환율 vs 금리 vs 주가지수)를 비교할 때는 '수익률/변동률(%) 기준'을 권장합니다. (선택 기간 시작일 = 0%)"
-        )
+        norm_mode = st.radio("비교 방식", options=["수익률/변동률(%) 기준", "실제 수치(절대값) 기준"], index=0)
 
     if multi_selected:
         fig_multi = go.Figure()
-        
         for name in multi_selected:
             sym = ALL_TICKERS[name]
             m_df = fetch_ticker_data(sym, period=multi_period)
             if m_df is not None and not m_df.empty:
                 y_data = m_df['Close']
-                
                 if "JPY/KRW" in name and y_data.iloc[-1] < 50:
                     y_data = y_data * 100
-                
                 if norm_mode == "수익률/변동률(%) 기준":
                     base_val = y_data.iloc[0]
-                    if base_val != 0:
-                        y_data = ((y_data - base_val) / base_val) * 100
-                        y_title = "기준일 대비 누적 변동률 (%)"
-                    else:
-                        y_title = "수치"
+                    y_data = ((y_data - base_val) / base_val) * 100 if base_val != 0 else y_data
+                    y_title = "기준일 대비 누적 변동률 (%)"
                 else:
                     y_title = "실제 수치 / 가격"
 
-                fig_multi.add_trace(go.Scatter(
-                    x=m_df.index,
-                    y=y_data,
-                    mode='lines',
-                    name=clean_tag_ui(name),
-                    line=dict(width=2)
-                ))
+                fig_multi.add_trace(go.Scatter(x=m_df.index, y=y_data, mode='lines', name=clean_tag_ui(name), line=dict(width=2)))
 
-        fig_multi.update_layout(
-            title=f"다중 지표 비교 추이 ({multi_period} 기준)",
-            xaxis_title="일자",
-            yaxis_title=y_title,
-            hovermode="x unified",
-            margin=dict(l=20, r=20, t=40, b=20),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        
+        fig_multi.update_layout(title=f"다중 지표 비교 추이 ({multi_period} 기준)", xaxis_title="일자", yaxis_title=y_title, hovermode="x unified", margin=dict(l=20, r=20, t=40, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         if norm_mode == "수익률/변동률(%) 기준":
             fig_multi.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.7)
-
         st.plotly_chart(fig_multi, use_container_width=True)
-    else:
-        st.info("비교할 지표를 최소 1개 이상 선택해주세요.")
 
 # ==============================================================================
 # MENU 2: 기관 13F 포트폴리오 분석 (AUM 원화 환산 + 영어 원문 종목명 완비)
@@ -966,7 +1043,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             delta=f"KRW {aum_krw_str}",
             delta_color="off",
             help=f"13F 공시 대상 미국 주식 총 평가액\n원/달러 전일 공식 종가({usdkrw_prev:,.2f}원/$) 기준 환산: {aum_krw_str}"
-            #help=f"기준 환산: {aum_krw_str}"
         )
         m1.caption(f"💵 원화 환산: **{aum_krw_str}** (전일 종가 {usdkrw_prev:,.1f}원/$)")
         
@@ -985,7 +1061,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             "📊 상위 종목 비중 순위"
         ])
         
-        # TAB 1: 트리맵 (드롭다운 선택 & 영어 원문 종목명)
+        # TAB 1: 트리맵
         with tab_v1:
             tree_options = [10, 20, 30, 40, 50, 70, 100]
             valid_tree_options = [n for n in tree_options if n <= len(latest_df)]
@@ -1034,7 +1110,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             )
             st.plotly_chart(fig_tree, use_container_width=True)
 
-        # TAB 2: 기간별 비중 추이 (소수점 2자리 반올림 및 범례 우측 분리)
+        # TAB 2: 기간별 비중 추이
         with tab_v2:
             st.markdown("#### ⚙️ 기간별 비중 추이 조건 설정")
             col_ctl1, col_ctl2 = st.columns([1, 1])
@@ -1160,7 +1236,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             )
             st.plotly_chart(fig_trend, use_container_width=True)
 
-        # TAB 3: 직전 분기 대비 매수/매도 변동 내역 (영어 원문 종목명)
+        # TAB 3: 직전 분기 대비 매수/매도 변동 내역
         with tab_v3:
             if len(all_history_results) >= 2:
                 prev_df, prev_meta = all_history_results[1]
@@ -1230,7 +1306,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             else:
                 st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
 
-        # TAB 4: 상위 종목 비중 순위 (영어 원문 종목명)
+        # TAB 4: 상위 종목 비중 순위
         with tab_v4:
             bar_n = st.selectbox("바 차트 표시 종목 수", [10, 20, 30, 40, 50], index=0)
             df_bar_top = latest_df.head(bar_n).sort_values(by='weight', ascending=True).copy()
@@ -1256,7 +1332,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 
         st.divider()
 
-        # 3. 전체 보유 종목 상세 표 (영어 원문 종목명)
+        # 3. 전체 보유 종목 상세 표
         st.subheader("📋 전체 보유 지분 상세 목록")
         df_display = latest_df[['name', 'weight', 'value', 'shares', 'class', 'cusip']].copy()
         df_display.columns = ['종목명 (Issuer)', '비중 (%)', '평가액 ($)', '보유 주식수', '주식 종류', 'CUSIP']
