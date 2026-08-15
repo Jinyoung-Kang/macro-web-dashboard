@@ -245,8 +245,8 @@ def render_sec_view():
 
     st.divider()
 
-    # 3. 전체 보유 종목 상세 표
-    st.subheader("📋 전체 보유 지분 상세 목록")
+    # 3. 전체 보유 종목 상세 표 (기준 날짜 표기 추가)
+    st.subheader(f"📋 전체 보유 지분 상세 목록 (기준일: {meta['report_date']})")
     df_display = latest_df[['name', 'weight', 'value', 'shares', 'class', 'cusip']].copy()
     df_display.columns = ['종목명 (Issuer)', '비중 (%)', '평가액 ($)', '보유 주식수', '주식 종류', 'CUSIP']
     df_display['비중 (%)'] = df_display['비중 (%)'].map('{:.2f}%'.format)
