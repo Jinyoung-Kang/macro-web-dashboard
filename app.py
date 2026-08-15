@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import requests
 import io
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from streamlit_autorefresh import st_autorefresh
@@ -199,10 +200,20 @@ vix_hist = fetch_ticker_data("^VIX", period="1mo")
 move_hist = fetch_ticker_data("^MOVE", period="1mo")
 hy_df = fetch_fred_hy_spread()
 
-def clean_tag(text: str) -> str:
-    return text.replace(":gray[", "").replace("]", "")
+# 텍스트 가공 헬퍼 함수
+def clean_category_title(text: str) -> str:
+    """카테고리명에서 마크다운 태그만 제거하고 '(지연 수준)'은 유지"""
+    return re.sub(r':gray\[(.*?)\]', r'\1', text)
 
-# 텍스트 종합 브리핑 문자열 생성 (KST 갱신 시각만 기록)
+def clean_item_briefing(text: str) -> str:
+    """텍스트 브리핑용: 개별 지표명에서 지연 수준 표기를 완전히 제거"""
+    return re.sub(r'\s*:gray\[.*?\]', '', text).strip()
+
+def clean_tag_ui(text: str) -> str:
+    """UI 셀렉트박스/차트용: 마크다운 태그만 벗기고 텍스트는 유지"""
+    return re.sub(r':gray\[(.*?)\]', r'\1', text)
+
+# 텍스트 종합 브리핑 문자열 생성
 lines = [
     "📌 [글로벌 매크로 지표 종합 브리핑]",
     f"⏱ 기준 시각: {now_str_kst} (KST)",
@@ -210,14 +221,16 @@ lines = [
     "=" * 55
 ]
 for cat_name, items in collected_data.items():
-    lines.append(f"\n{clean_tag(cat_name)}")
+    # 카테고리 헤더에는 지연 수준 유지 (예: 💵 통화 및 환율 (실시간))
+    lines.append(f"\n{clean_category_title(cat_name)}")
     lines.append("-" * 45)
     for item in items:
-        clean_item_name = clean_tag(item['name'])
+        # 개별 지표명 옆의 지연 수준은 제거 (예: • 달러 인덱스 (DXY))
+        clean_name = clean_item_briefing(item['name'])
         if item["status"] == "ok":
-            lines.append(f"• {clean_item_name:<24} : {item['price_str']:>9} (전일: {item['prev_str']:>9}) | 전일비 {item['delta_str']}")
+            lines.append(f"• {clean_name:<18} : {item['price_str']:>9} (전일: {item['prev_str']:>9}) | 전일비 {item['delta_str']}")
         else:
-            lines.append(f"• {clean_item_name:<24} : {item['price_str']:>9} | {item['delta_str']}")
+            lines.append(f"• {clean_name:<18} : {item['price_str']:>9} | {item['delta_str']}")
 
 if rate_10y_curr is not None and rate_2y_curr is not None:
     curr_spread = rate_10y_curr - rate_2y_curr
@@ -246,8 +259,6 @@ report_text = "\n".join(lines)
 # ==========================================
 # 3. 헤더 영역 (실시간 듀얼 디지털 시계 + KST 갱신 시각)
 # ==========================================
-
-# 1초마다 자동/동적으로 동작하는 자바스크립트 실시간 시계 컴포넌트
 live_clock_html = """
 <div style="
     display: flex; 
@@ -291,9 +302,7 @@ header_left, header_right = st.columns([3, 1])
 
 with header_left:
     st.title("📊 Global Macro Dashboard")
-    # 실시간 동적 시계 임베딩
     components.html(live_clock_html, height=45)
-    # 데이터 최근 갱신 시각 (KST 기준만 표시)
     st.caption(f"최근 데이터 갱신 시각: {now_str_kst} (KST) | 갱신 주기: {refresh_interval}초")
 
 with header_right:
@@ -306,7 +315,7 @@ with header_right:
 st.divider()
 
 # ==========================================
-# 4. 메인 시세 요약 카드 렌더링
+# 4. 메인 시세 요약 카드 렌더링 (지연 수준 표기 유지)
 # ==========================================
 st.subheader("실시간/최근 시세 요약")
 st.info("💡 **변동 수치(+/-) 기준:** 각 지표 하단의 수치는 **직전 거래일 공식 종가(Previous Close) 대비 등락폭과 등락률(%)**입니다.", icon="ℹ️")
@@ -630,7 +639,7 @@ with c1:
     selected_name = st.selectbox(
         "조회할 단일 지표 선택", 
         list(ALL_TICKERS.keys()),
-        format_func=clean_tag
+        format_func=clean_tag_ui
     )
 with c2:
     period = st.selectbox("조회 기간", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3, key="single_period")
@@ -645,11 +654,11 @@ try:
             x=df.index, 
             y=df['Close'], 
             mode='lines', 
-            name=clean_tag(selected_name),
+            name=clean_tag_ui(selected_name),
             line=dict(color='#0066FF', width=2)
         ))
         fig.update_layout(
-            title=f"{clean_tag(selected_name)} ({selected_symbol}) 상세 차트",
+            title=f"{clean_tag_ui(selected_name)} ({selected_symbol}) 상세 차트",
             xaxis_title="일자",
             yaxis_title="수치/가격",
             hovermode="x unified",
@@ -675,7 +684,7 @@ with col_comp1:
         "비교할 지표 선택 (다중 선택 가능)",
         options=list(ALL_TICKERS.keys()),
         default=["원/달러 (USD/KRW) :gray[[실시간]]", "달러 인덱스 (DXY) :gray[[실시간]]"],
-        format_func=clean_tag
+        format_func=clean_tag_ui
     )
 
 with col_comp2:
@@ -719,7 +728,7 @@ if multi_selected:
                 x=m_df.index,
                 y=y_data,
                 mode='lines',
-                name=clean_tag(name),
+                name=clean_tag_ui(name),
                 line=dict(width=2)
             ))
 
