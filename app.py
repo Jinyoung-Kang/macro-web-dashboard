@@ -965,8 +965,8 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             f"${meta['total_aum']/1e9:,.2f} B", 
             delta=f"KRW {aum_krw_str}",
             delta_color="off",
-            #help=f"13F 공시 대상 미국 주식 총 평가액\n원/달러 전일 공식 종가({usdkrw_prev:,.2f}원/$) 기준 환산: {aum_krw_str}"
-            help=f"기준 환산: {aum_krw_str}"
+            help=f"13F 공시 대상 미국 주식 총 평가액\n원/달러 전일 공식 종가({usdkrw_prev:,.2f}원/$) 기준 환산: {aum_krw_str}"
+            #help=f"기준 환산: {aum_krw_str}"
         )
         m1.caption(f"💵 원화 환산: **{aum_krw_str}** (전일 종가 {usdkrw_prev:,.1f}원/$)")
         
