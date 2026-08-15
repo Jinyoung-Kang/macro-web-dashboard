@@ -231,21 +231,57 @@ def render_sec_view():
         else:
             st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
 
-    # TAB 4: 상위 종목 비중 순위
+    # TAB 4: 상위 종목 비중 순위 (기준 날짜(분기) & 종목 수 선택 가능)
     with tab_v4:
-        bar_n = st.selectbox("바 차트 표시 종목 수", [10, 20, 30, 40, 50], index=0)
-        df_bar_top = latest_df.head(bar_n).sort_values(by='weight', ascending=True).copy()
-        fig_bar = go.Figure(go.Bar(
-            x=df_bar_top['weight'], y=df_bar_top['name'], orientation='h',
-            marker=dict(color='#0066FF', opacity=0.85), text=df_bar_top['weight'].apply(lambda x: f"{x:.2f}%"),
-            textposition='outside', hovertemplate="<b>%{y}</b><br>포트폴리오 비중: %{x:.2f}%<extra></extra>"
-        ))
-        fig_bar.update_layout(height=max(380, bar_n * 26 + 100), title=f"{selected_inst_name} 상위 Top {bar_n} 보유 비중", xaxis_title="포트폴리오 비중 (%)", yaxis_title="", margin=dict(l=20, r=40, t=40, b=20))
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.markdown("#### ⚙️ 상위 종목 비중 순위 조회 조건 설정")
+        col_b1, col_b2 = st.columns([1, 1])
+        
+        with col_b1:
+            available_dates_bar = [q_meta['report_date'] for _, q_meta in all_history_results]
+            selected_bar_date = st.selectbox(
+                "기준 공시일(분기) 선택",
+                options=available_dates_bar,
+                index=0,
+                key="barchart_date_select"
+            )
+            
+        selected_bar_df = None
+        for df_q, q_meta in all_history_results:
+            if q_meta['report_date'] == selected_bar_date:
+                selected_bar_df = df_q.sort_values(by='weight', ascending=False).reset_index(drop=True)
+                break
+                
+        if selected_bar_df is not None:
+            with col_b2:
+                bar_options = [10, 20, 30, 40, 50, 70, 100]
+                valid_bar_options = [n for n in bar_options if n <= len(selected_bar_df)] or [min(10, len(selected_bar_df))]
+                
+                bar_n = st.selectbox(
+                    "바 차트 표시 종목 수 선택",
+                    options=valid_bar_options,
+                    index=min(0, len(valid_bar_options)-1),
+                    format_func=lambda x: f"상위 Top {x}개 종목",
+                    key="barchart_n_select"
+                )
+                
+            df_bar_top = selected_bar_df.head(bar_n).sort_values(by='weight', ascending=True).copy()
+            
+            fig_bar = go.Figure(go.Bar(
+                x=df_bar_top['weight'], y=df_bar_top['name'], orientation='h',
+                marker=dict(color='#0066FF', opacity=0.85), text=df_bar_top['weight'].apply(lambda x: f"{x:.2f}%"),
+                textposition='outside', hovertemplate="<b>%{y}</b><br>포트폴리오 비중: %{x:.2f}%<extra></extra>"
+            ))
+            fig_bar.update_layout(
+                height=max(380, bar_n * 26 + 100),
+                title=f"{selected_inst_name} 상위 Top {bar_n} 보유 비중 (기준일: {selected_bar_date})",
+                xaxis_title="포트폴리오 비중 (%)", yaxis_title="",
+                margin=dict(l=20, r=40, t=40, b=20)
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
 
     st.divider()
 
-    # 3. 전체 보유 종목 상세 표 (기준 날짜 표기 추가)
+    # 3. 전체 보유 종목 상세 표
     st.subheader(f"📋 전체 보유 지분 상세 목록 (기준일: {meta['report_date']})")
     df_display = latest_df[['name', 'weight', 'value', 'shares', 'class', 'cusip']].copy()
     df_display.columns = ['종목명 (Issuer)', '비중 (%)', '평가액 ($)', '보유 주식수', '주식 종류', 'CUSIP']
