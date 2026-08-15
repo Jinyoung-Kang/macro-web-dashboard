@@ -8,7 +8,7 @@ from services.macro_service import fetch_ticker_data
 from services.sec_service import fetch_sec_13f_multi_quarters, classify_qoq_action
 
 def render_sec_view():
-    st.title("📑 대가들의 포트폴리오 (13F Holdings & QoQ Analysis)")
+    st.title("📑 주요 기관들의 포트폴리오 (13F Holdings & QoQ Analysis)")
     st.caption("SEC EDGAR 공식 공시 데이터 기반 미국 주요 기관 투자자 포트폴리오 분석 & 기간별 비중 추적")
 
     selected_inst_name = st.selectbox("분석할 기관을 선택하세요", options=list(INSTITUTIONS.keys()), index=0)
