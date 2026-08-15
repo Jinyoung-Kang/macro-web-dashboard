@@ -951,13 +951,13 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             usdkrw_prev = float(usdkrw_hist['Close'].iloc[-2])
         elif usdkrw_hist is not None and len(usdkrw_hist) == 1:
             usdkrw_prev = float(usdkrw_hist['Close'].iloc[-1])
-
+"""
         total_aum_krw = meta['total_aum'] * usdkrw_prev
         if total_aum_krw >= 1e12:
             aum_krw_str = f"약 {total_aum_krw/1e12:,.1f}조 원"
         else:
             aum_krw_str = f"약 {total_aum_krw/1e8:,.0f}억 원"
-"""
+
         # 1. 메인 요약 메트릭 카드 (원화 환산 병기)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric(
