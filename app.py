@@ -47,7 +47,7 @@ if not check_password():
 # ==========================================
 # 1. 사이드바 네비게이션 & 갱신 설정
 # ==========================================
-st.sidebar.header("🧭 대시보드 메뉴")
+st.sidebar.header("대시보드 메뉴")
 menu_selection = st.sidebar.radio(
     "이동할 메뉴를 선택하세요",
     ["📊 거시경제 매크로 지표", "📑 기관 13F 포트폴리오 분석"],
@@ -472,7 +472,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
         st.plotly_chart(fig, use_container_width=True)
 
 # ==============================================================================
-# MENU 2: 기관 13F 포트폴리오 분석 (신규 기능)
+# MENU 2: 기관 13F 포트폴리오 분석 (Gemini 정규 모델 연동)
 # ==============================================================================
 elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     
@@ -493,20 +493,18 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     selected_inst_name = st.selectbox(
         "분석할 기관을 선택하세요",
         options=list(INSTITUTIONS.keys()),
-        index=1  # 기본값: 버크셔 해서웨이
+        index=1
     )
     
     inst_info = INSTITUTIONS[selected_inst_name]
     st.info(f"💡 **기관 소개:** {inst_info['desc']} (SEC CIK: `{inst_info['cik']}`)", icon="ℹ️")
 
-    # SEC EDGAR 13F 크롤링 및 파싱 함수
     @st.cache_data(ttl=86400, show_spinner=False)
     def fetch_sec_13f(cik: str):
         user_agent = st.secrets.get("sec", {}).get("user_agent", "MacroDashboard user@gmail.com")
         headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
         
         try:
-            # 1. 제출 내역 조회
             sub_url = f"https://data.sec.gov/submissions/CIK{cik.zfill(10)}.json"
             r = requests.get(sub_url, headers=headers, timeout=15)
             if r.status_code != 200:
@@ -516,7 +514,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             recent = sub_data.get('filings', {}).get('recent', {})
             forms = recent.get('form', [])
             
-            # 최신 13F-HR 공시 찾기
             f_idx = None
             for idx, f in enumerate(forms):
                 if f in ['13F-HR', '13F-HR/A']:
@@ -531,7 +528,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             filing_date = recent['filingDate'][f_idx]
             acc_clean = accession_number.replace('-', '')
             
-            # 2. 13F Information Table XML 파일명 탐색
             dir_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/index.json"
             dir_resp = requests.get(dir_url, headers=headers, timeout=15)
             
@@ -550,7 +546,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                             xml_filename = name
                             break
             
-            # index.json 실패 시 index.htm 파싱
             if not xml_filename:
                 htm_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{accession_number}-index.htm"
                 htm_resp = requests.get(htm_url, headers=headers, timeout=15)
@@ -567,7 +562,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             if not xml_filename:
                 return None, "13F Information Table XML 파일을 찾을 수 없습니다."
 
-            # 3. XML 다운로드 및 파싱
             xml_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{xml_filename}"
             xml_resp = requests.get(xml_url, headers=headers, timeout=25)
             if xml_resp.status_code != 200:
@@ -577,7 +571,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             
             holdings = []
             for child in root:
-                # 네임스페이스 제거 태그 매칭
                 tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
                 if tag_name.lower() in ['infotable', 'informationtable']:
                     row = {}
@@ -612,13 +605,10 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 return None, "파싱된 주식 보유 데이터가 없습니다."
 
             df = pd.DataFrame(holdings)
-            
-            # SEC 2023년 이후 규칙 (원 달러 vs 천 달러 단위 자동 보정)
             total_v = df['value'].sum()
-            if total_v < 10000000 and len(df) > 10:  # 단위가 천 달러($'000)인 경우
+            if total_v < 10000000 and len(df) > 10:
                 df['value'] = df['value'] * 1000
 
-            # 동일 종목 합산
             df = df.groupby('name', as_index=False).agg({
                 'value': 'sum',
                 'shares': 'sum',
@@ -660,12 +650,11 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 
         st.divider()
 
-        # 2. 포트폴리오 비중 시각화 (트리맵 & Top 10 바차트)
+        # 2. 포트폴리오 비중 시각화
         st.subheader("📊 포트폴리오 비중 인터랙티브 시각화")
         tab_v1, tab_v2 = st.tabs(["🌳 포트폴리오 트리맵 (Treemap)", "📈 상위 10개 종목 비중"])
         
         with tab_v1:
-            # 상위 50개 종목 트리맵
             df_tree = df_holdings.head(50).copy()
             df_tree['label'] = df_tree['name'] + "<br>" + df_tree['weight'].apply(lambda x: f"{x:.2f}%") + "<br>($" + (df_tree['value']/1e6).apply(lambda x: f"{x:,.1f}M") + ")"
             fig_tree = px.treemap(
@@ -712,11 +701,10 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 
         st.divider()
 
-        # 4. Gemini Pro AI 심층 전략 리포트 생성기
-        st.subheader("🤖 Gemini Pro AI 심층 투자 전략 리포트")
-        st.caption("정량적 13F 데이터셋을 Gemini Pro 모델에 전달하여 기관의 투자 철학과 거시경제 베팅 방향을 분석합니다.")
+        # 4. Gemini AI 심층 전략 리포트 생성기 (정규 모델 리스트 순차 시도)
+        st.subheader("🤖 Gemini AI 심층 투자 전략 리포트")
+        st.caption("정량적 13F 데이터셋을 Google Gemini 모델에 전달하여 기관의 투자 철학과 거시경제 베팅 방향을 분석합니다.")
 
-        # Gemini API 호출 함수 (REST 방식 직통 호출)
         def generate_gemini_report(inst_name: str, meta_data: dict, top_df: pd.DataFrame) -> str:
             gemini_key = st.secrets.get("gemini", {}).get("api_key", None)
             if not gemini_key:
@@ -754,7 +742,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 
 답변은 마크다운 헤더와 불릿 포인트를 활용하여 최고급 금융 리포트 양식으로 깔끔하게 작성해주세요.
 """
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={gemini_key}"
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
@@ -762,25 +749,28 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                     "maxOutputTokens": 4096
                 }
             }
-            try:
-                resp = requests.post(url, json=payload, timeout=40)
-                if resp.status_code == 200:
-                    resp_json = resp.json()
-                    candidates = resp_json.get('candidates', [])
-                    if candidates:
-                        return candidates[0]['content']['parts'][0]['text']
-                    return "리포트를 생성하지 못했습니다. 응답 내용을 확인해주세요."
-                else:
-                    # gemini-2.5-pro 실패 시 gemini-2.5-flash로 폴백
-                    fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
-                    resp_fb = requests.post(fallback_url, json=payload, timeout=40)
-                    if resp_fb.status_code == 200:
-                        return resp_fb.json()['candidates'][0]['content']['parts'][0]['text']
-                    return f"Gemini API 호출 실패 (상태 코드: {resp.status_code}, 메시지: {resp.text})"
-            except Exception as ex:
-                return f"Gemini API 통신 중 오류 발생: {str(ex)}"
+            
+            # Google Gemini 공식 정식 모델 엔드포인트 목록
+            models_to_try = ["gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"]
+            last_error = ""
+            
+            for model in models_to_try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
+                try:
+                    resp = requests.post(url, json=payload, timeout=45)
+                    if resp.status_code == 200:
+                        resp_json = resp.json()
+                        candidates = resp_json.get('candidates', [])
+                        if candidates and 'content' in candidates[0] and 'parts' in candidates[0]['content']:
+                            return candidates[0]['content']['parts'][0]['text']
+                    else:
+                        last_error = f"[{model}] 상태 코드 {resp.status_code}: {resp.text}"
+                except Exception as ex:
+                    last_error = f"[{model}] 통신 오류: {str(ex)}"
+
+            return f"⚠️ Gemini API 호출 실패:\n\n{last_error}"
 
         if st.button("🚀 Gemini Pro 분석 리포트 생성", type="primary", use_container_width=True):
-            with st.spinner("Gemini Pro가 13F 데이터를 정밀 분석하여 맞춤형 전략 리포트를 작성 중입니다..."):
+            with st.spinner("Gemini AI가 13F 데이터를 정밀 분석하여 맞춤형 전략 리포트를 작성 중입니다..."):
                 report_content = generate_gemini_report(selected_inst_name, meta, df_holdings)
                 st.markdown(report_content)
