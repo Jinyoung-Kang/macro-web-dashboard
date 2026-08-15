@@ -5,6 +5,7 @@ import pandas as pd
 import requests
 import io
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="Global Macro Web Dashboard", layout="wide")
@@ -59,8 +60,17 @@ if st.sidebar.button("로그아웃", use_container_width=True):
     st.rerun()
 
 # ==========================================
-# 2. 매크로 지표 정의 및 데이터 수집 함수
+# 2. 시간대(KST / NY) 설정 및 매크로 지표 정의
 # ==========================================
+kst_tz = ZoneInfo("Asia/Seoul")
+ny_tz = ZoneInfo("America/New_York")
+
+now_kst = datetime.now(kst_tz)
+now_ny = datetime.now(ny_tz)
+
+now_str_kst = now_kst.strftime('%Y-%m-%d %H:%M:%S')
+now_str_ny = now_ny.strftime('%Y-%m-%d %H:%M:%S')
+
 MACRO_CATEGORIES = {
     "💵 통화 및 환율 :gray[(실시간)]": {
         "달러 인덱스 (DXY) :gray[[실시간]]": "DX-Y.NYB",
@@ -91,8 +101,6 @@ MACRO_CATEGORIES = {
         "항셍 지수 (HSI) :gray[[15분 지연]]": "^HSI"
     }
 }
-
-now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_ticker_data(symbol, period="5d"):
@@ -195,19 +203,19 @@ vix_hist = fetch_ticker_data("^VIX", period="1mo")
 move_hist = fetch_ticker_data("^MOVE", period="1mo")
 hy_df = fetch_fred_hy_spread()
 
-# 텍스트 종합 브리핑 문자열 생성 (태그 제거 후 깔끔한 텍스트로 가공)
 def clean_tag(text: str) -> str:
     return text.replace(":gray[", "").replace("]", "")
 
+# 텍스트 종합 브리핑 문자열 생성 (한국/뉴욕 기준 시각 명시)
 lines = [
     "📌 [글로벌 매크로 지표 종합 브리핑]",
-    f"⏱ 기준 시각: {now_str}",
+    f"⏱ 갱신 시각: 🇰🇷 {now_str_kst} (KST) | 🇺🇸 {now_str_ny} (EST/EDT)",
     "※ 변동 기준: 직전 거래일 종가 대비 (+, - 수치 및 %)",
-    "=" * 55
+    "=" * 60
 ]
 for cat_name, items in collected_data.items():
     lines.append(f"\n{clean_tag(cat_name)}")
-    lines.append("-" * 45)
+    lines.append("-" * 50)
     for item in items:
         clean_item_name = clean_tag(item['name'])
         if item["status"] == "ok":
@@ -220,11 +228,11 @@ if rate_10y_curr is not None and rate_2y_curr is not None:
     prev_spread = rate_10y_prev - rate_2y_prev
     spread_delta = curr_spread - prev_spread
     lines.append("\n📊 주요 거시 스프레드 (15분 지연)")
-    lines.append("-" * 45)
+    lines.append("-" * 50)
     lines.append(f"• 10Y-2Y 장단기 금리차    : {curr_spread:>8.2f}%p (전일: {prev_spread:>8.2f}%p) | 전일비 {spread_delta:+.2f}%p")
 
 lines.append("\n⚡ 신용 및 시장 변동성 지표")
-lines.append("-" * 45)
+lines.append("-" * 50)
 if vix_hist is not None and len(vix_hist) >= 2:
     v_c, v_p = vix_hist['Close'].iloc[-1], vix_hist['Close'].iloc[-2]
     lines.append(f"• CBOE VIX [15분 지연]    : {v_c:>8.2f} pt (전일: {v_p:>8.2f}) | 전일비 {v_c-v_p:+.2f} ({((v_c-v_p)/v_p)*100:+.2f}%)")
@@ -236,17 +244,21 @@ if hy_df is not None and len(hy_df) >= 2:
     h_dt = hy_df.index[-1].strftime('%m-%d')
     lines.append(f"• 하이일드 OAS [1일지연 {h_dt}]: {h_c:>8.2f}%p (전일: {h_p:>8.2f}%p) | 전일비 {h_c-h_p:+.2f}%p")
 
-lines.append("\n" + "=" * 55)
+lines.append("\n" + "=" * 60)
 report_text = "\n".join(lines)
 
 # ==========================================
-# 3. 헤더 영역
+# 3. 헤더 영역 (한국 & 뉴욕 시계 바)
 # ==========================================
 header_left, header_right = st.columns([3, 1])
 
 with header_left:
     st.title("📊 Global Macro Dashboard")
-    st.caption(f"최근 데이터 갱신 시각: {now_str} (갱신 주기: {refresh_interval}초)")
+    st.markdown(
+        f"🕒 **한국 (KST):** `{now_str_kst}` &nbsp;&nbsp;|&nbsp;&nbsp; "
+        f"🗽 **뉴욕 (EST/EDT):** `{now_str_ny}` &nbsp;&nbsp;"
+        f":gray[(갱신 주기: {refresh_interval}초)]"
+    )
 
 with header_right:
     st.write("")
