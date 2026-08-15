@@ -7,6 +7,7 @@ import pandas as pd
 import requests
 import io
 import re
+import time
 import urllib3
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
@@ -123,7 +124,7 @@ setInterval(updateLiveClocks, 1000);
 """
 
 # ==============================================================================
-# MENU 1: 거시경제 매크로 대시보드 (전체 복원 완료)
+# MENU 1: 거시경제 매크로 대시보드
 # ==============================================================================
 if menu_selection == "📊 거시경제 매크로 지표":
     MACRO_CATEGORIES = {
@@ -748,7 +749,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
         st.info("비교할 지표를 최소 1개 이상 선택해주세요.")
 
 # ==============================================================================
-# MENU 2: 기관 13F 포트폴리오 분석 (AUM 원화 환산 + 영어 원문 종목명 완비)
+# MENU 2: 기관 13F 포트폴리오 분석 & Gemini API 연결 점검
 # ==============================================================================
 elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     
@@ -958,7 +959,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
         else:
             aum_krw_str = f"약 {total_aum_krw/1e8:,.0f}억 원"
 
-        # 1. 메인 요약 메트릭 카드 (원화 환산 병기)
+        # 1. 메인 요약 메트릭 카드
         m1, m2, m3, m4 = st.columns(4)
         m1.metric(
             "총 운용자산 (AUM)", 
@@ -966,7 +967,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             delta=f"KRW {aum_krw_str}",
             delta_color="off",
             help=f"13F 공시 대상 미국 주식 총 평가액\n원/달러 전일 공식 종가({usdkrw_prev:,.2f}원/$) 기준 환산: {aum_krw_str}"
-            #help=f"기준 환산: {aum_krw_str}"
         )
         m1.caption(f"💵 원화 환산: **{aum_krw_str}** (전일 종가 {usdkrw_prev:,.1f}원/$)")
         
@@ -985,7 +985,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             "📊 상위 종목 비중 순위"
         ])
         
-        # TAB 1: 트리맵 (드롭다운 선택 & 영어 원문 종목명)
+        # TAB 1: 트리맵
         with tab_v1:
             tree_options = [10, 20, 30, 40, 50, 70, 100]
             valid_tree_options = [n for n in tree_options if n <= len(latest_df)]
@@ -1014,14 +1014,14 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 values='value',
                 title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top {tree_n}, {meta['report_date']} 기준)",
                 color='weight',
-                color_continuous_scale='Burg'
+                color_continuous_scale='Blues'
             )
             
             fig_tree.update_traces(
                 text=df_tree['display_label'],
                 textinfo="text",
                 textposition="middle center",
-                insidetextfont=dict(size=14, color="#161617", family="Arial, sans-serif"),
+                insidetextfont=dict(size=14, color="#FFFFFF", family="Arial, sans-serif"),
                 marker=dict(line=dict(color="#0F172A", width=1.5)),
                 hovertemplate="<b>%{label}</b><br>평가액: $%{value:,.0f}<br>포트폴리오 비중: %{color:.2f}%<extra></extra>"
             )
@@ -1034,7 +1034,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             )
             st.plotly_chart(fig_tree, use_container_width=True)
 
-        # TAB 2: 기간별 비중 추이 (소수점 2자리 반올림 및 범례 우측 분리)
+        # TAB 2: 기간별 비중 추이
         with tab_v2:
             st.markdown("#### ⚙️ 기간별 비중 추이 조건 설정")
             col_ctl1, col_ctl2 = st.columns([1, 1])
@@ -1160,7 +1160,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             )
             st.plotly_chart(fig_trend, use_container_width=True)
 
-        # TAB 3: 직전 분기 대비 매수/매도 변동 내역 (영어 원문 종목명)
+        # TAB 3: 직전 분기 대비 매수/매도 변동
         with tab_v3:
             if len(all_history_results) >= 2:
                 prev_df, prev_meta = all_history_results[1]
@@ -1230,7 +1230,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             else:
                 st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
 
-        # TAB 4: 상위 종목 비중 순위 (영어 원문 종목명)
+        # TAB 4: 상위 종목 비중 순위
         with tab_v4:
             bar_n = st.selectbox("바 차트 표시 종목 수", [10, 20, 30, 40, 50], index=0)
             df_bar_top = latest_df.head(bar_n).sort_values(by='weight', ascending=True).copy()
@@ -1256,7 +1256,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 
         st.divider()
 
-        # 3. 전체 보유 종목 상세 표 (영어 원문 종목명)
+        # 3. 전체 보유 종목 상세 표
         st.subheader("📋 전체 보유 지분 상세 목록")
         df_display = latest_df[['name', 'weight', 'value', 'shares', 'class', 'cusip']].copy()
         df_display.columns = ['종목명 (Issuer)', '비중 (%)', '평가액 ($)', '보유 주식수', '주식 종류', 'CUSIP']
@@ -1265,3 +1265,53 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
         df_display['보유 주식수'] = df_display['보유 주식수'].map('{:,.0f}'.format)
         
         st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # 4. Gemini API 연결 상태 점검 섹션 (신규 추가)
+        st.subheader("🔌 Google Gemini API 연결 상태 점검")
+        st.caption("Google AI Studio에서 발급받은 Gemini API 키가 Streamlit Secrets에 올바르게 연동되어 있는지 테스트합니다.")
+
+        def test_gemini_api_connection():
+            gemini_key = st.secrets.get("gemini", {}).get("api_key", None)
+            if not gemini_key:
+                return False, "❌ **연결 실패:** Streamlit Secrets에 `[gemini] api_key`가 설정되지 않았습니다. Secrets를 확인해주세요."
+            
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{
+                    "parts": [{"text": "Hello! Please reply strictly with: 'Gemini API 연결에 성공했습니다.'"}]
+                }],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 50
+                }
+            }
+            
+            start_t = time.time()
+            try:
+                resp = requests.post(url, json=payload, timeout=15)
+                elapsed = time.time() - start_t
+                if resp.status_code == 200:
+                    resp_json = resp.json()
+                    candidates = resp_json.get('candidates', [])
+                    if candidates and 'content' in candidates[0]:
+                        reply = candidates[0]['content']['parts'][0]['text']
+                        return True, f"✅ **연결 성공!** (응답 시간: `{elapsed:.2f}초`, 사용 모델: `gemini-1.5-flash`)\n\n> 🤖 **Gemini 응답:** {reply}"
+                    return False, f"⚠️ **응답 파싱 오류:** {resp.text}"
+                elif resp.status_code == 400:
+                    return False, f"❌ **API 키 오류 (HTTP 400):** 발급받은 API 키가 올바른지 확인해주세요.\n\n```json\n{resp.text}\n```"
+                elif resp.status_code == 404:
+                    return False, f"❌ **엔드포인트 오류 (HTTP 404):** 모델 경로를 찾을 수 없습니다.\n\n```json\n{resp.text}\n```"
+                else:
+                    return False, f"❌ **연결 실패 (HTTP {resp.status_code}):**\n\n```json\n{resp.text}\n```"
+            except Exception as ex:
+                return False, f"❌ **통신 오류:** {str(ex)}"
+
+        if st.button("🚀 Gemini API 연결 테스트 실행", type="primary", use_container_width=True):
+            with st.spinner("Google Gemini 서버에 연결 핑(Ping)을 전송 중입니다..."):
+                is_ok, msg = test_gemini_api_connection()
+                if is_ok:
+                    st.success(msg)
+                else:
+                    st.error(msg)
