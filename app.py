@@ -450,7 +450,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
             st.metric("하이일드 스프레드", "로드 실패")
 
 # ==============================================================================
-# MENU 2: 기관 13F 포트폴리오 분석 (동적 높이 & 자동 확장/축소 완비)
+# MENU 2: 기관 13F 포트폴리오 분석 (트리맵 선택 방식 개선 & 소수점 2자리 반올림 완비)
 # ==============================================================================
 elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     
@@ -644,7 +644,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 
         st.divider()
 
-        # 2. 다차원 시각화 탭 (전 영역 동적 자동 확장/축소)
+        # 2. 다차원 시각화 탭
         st.subheader("📊 포트폴리오 시각화 및 기간별 비중 추이")
         tab_v1, tab_v2, tab_v3, tab_v4 = st.tabs([
             "🌳 포트폴리오 트리맵 (Treemap)", 
@@ -653,9 +653,20 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             "📊 상위 종목 비중 순위"
         ])
         
-        # TAB 1: 트리맵 (표시 종목 수에 따라 자동 높이 확장)
+        # TAB 1: 트리맵 (드롭다운 선택 방식 + 고대비 오션 블루 팔레트)
         with tab_v1:
-            tree_n = st.slider("트리맵 표시 종목 수", min_value=10, max_value=min(100, len(latest_df)), value=min(40, len(latest_df)), step=10, key="treemap_slider")
+            tree_options = [10, 20, 30, 40, 50, 70, 100]
+            valid_tree_options = [n for n in tree_options if n <= len(latest_df)]
+            if not valid_tree_options:
+                valid_tree_options = [min(10, len(latest_df))]
+            
+            tree_n = st.selectbox(
+                "트리맵 표시 종목 수 선택",
+                options=valid_tree_options,
+                index=min(3, len(valid_tree_options)-1),
+                format_func=lambda x: f"상위 Top {x}개 종목"
+            )
+            
             df_tree = latest_df.head(tree_n).copy()
             df_tree['value_m'] = df_tree['value'] / 1e6
             
@@ -665,25 +676,25 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 df_tree['value_m'].apply(lambda x: f"${x:,.1f}M")
             )
             
+            # 다크 모드 가독성이 탁월한 Blues 팔레트 적용
             fig_tree = px.treemap(
                 df_tree,
                 path=['name'],
                 values='value',
                 title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top {tree_n}, {meta['report_date']} 기준)",
                 color='weight',
-                color_continuous_scale='Tealgrn'
+                color_continuous_scale='Blues'
             )
             
             fig_tree.update_traces(
                 text=df_tree['display_label'],
                 textinfo="text",
                 textposition="middle center",
-                insidetextfont=dict(size=13, color="#FFFFFF", family="Arial, sans-serif"),
-                marker=dict(line=dict(color="#111827", width=1.5)),
+                insidetextfont=dict(size=14, color="#FFFFFF", family="Arial, sans-serif"),
+                marker=dict(line=dict(color="#0F172A", width=1.5)),
                 hovertemplate="<b>%{label}</b><br>평가액: $%{value:,.0f}<br>포트폴리오 비중: %{color:.2f}%<extra></extra>"
             )
             
-            # 종목 수에 비례하여 높이 동적 자동 계산
             dynamic_tree_height = max(480, int(360 + tree_n * 5.5))
             fig_tree.update_layout(
                 height=dynamic_tree_height,
@@ -692,7 +703,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             )
             st.plotly_chart(fig_tree, use_container_width=True)
 
-        # TAB 2: 기간별 비중 추이 (범례 우측 분리 & 종목 수에 따른 자동 높이 확장)
+        # TAB 2: 기간별 비중 추이 (소수점 2자리 반올림 표기 & 범례 우측 분리)
         with tab_v2:
             st.markdown("#### ⚙️ 기간별 비중 추이 조건 설정")
             col_ctl1, col_ctl2 = st.columns([1, 1])
@@ -760,18 +771,20 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             for idx, ticker in enumerate(target_tickers):
                 sub_df = df_top_hist[df_top_hist['name'] == ticker]
                 if not sub_df.empty:
+                    # 소수점 3자리에서 반올림하여 2자리로 표기 (f"{x:.2f}%")
                     if len(target_tickers) <= 8:
                         fig_trend.add_trace(go.Scatter(
                             x=sub_df['report_date_str'],
                             y=sub_df['weight'],
                             mode='lines+markers+text',
                             name=ticker,
-                            text=sub_df['weight'].apply(lambda x: f"{x:.1f}%"),
+                            text=sub_df['weight'].apply(lambda x: f"{x:.2f}%"),
                             textposition='top center',
                             textfont=dict(size=10.5, color="#E5E7EB"),
                             line=dict(width=2.5, color=distinct_colors[idx % len(distinct_colors)]),
                             marker=dict(size=7),
-                            cliponaxis=False
+                            cliponaxis=False,
+                            hovertemplate=f"<b>{ticker}</b><br>공시일: %{{x}}<br>비중: %{{y:.2f}}%<extra></extra>"
                         ))
                     else:
                         fig_trend.add_trace(go.Scatter(
@@ -781,12 +794,11 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                             name=ticker,
                             line=dict(width=2, color=distinct_colors[idx % len(distinct_colors)]),
                             marker=dict(size=6),
-                            cliponaxis=False
+                            cliponaxis=False,
+                            hovertemplate=f"<b>{ticker}</b><br>공시일: %{{x}}<br>비중: %{{y:.2f}}%<extra></extra>"
                         ))
 
-            # Y축 상단 마진 자동 확장
             y_upper_limit = max(max_y_val * 1.18, 5.0)
-            # 종목 수에 맞춰 차트 높이 자동 확장
             dynamic_trend_height = max(550, int(420 + len(target_tickers) * 12))
             
             fig_trend.update_layout(
@@ -805,7 +817,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                     automargin=True
                 ),
                 hovermode="x unified",
-                margin=dict(l=20, r=200, t=50, b=40),  # 우측 범례 공간 확보
+                margin=dict(l=20, r=200, t=50, b=40),
                 legend=dict(
                     orientation="v",
                     yanchor="top",
@@ -817,7 +829,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             )
             st.plotly_chart(fig_trend, use_container_width=True)
 
-        # TAB 3: 직전 분기 대비 매수/매도 변동 (변동 항목 수에 따라 자동 높이 확장)
+        # TAB 3: 직전 분기 대비 매수/매도 변동 내역
         with tab_v3:
             if len(all_history_results) >= 2:
                 prev_df, prev_meta = all_history_results[1]
@@ -886,7 +898,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             else:
                 st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
 
-        # TAB 4: 상위 종목 비중 순위 (선택한 개수만큼 바 차트 높이 자동 확장)
+        # TAB 4: 상위 종목 비중 순위
         with tab_v4:
             bar_n = st.selectbox("바 차트 표시 종목 수", [10, 20, 30, 40, 50], index=0)
             df_bar_top = latest_df.head(bar_n).sort_values(by='weight', ascending=True)
