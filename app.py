@@ -78,12 +78,17 @@ MACRO_CATEGORIES = {
         "브렌트유 ($)": "BZ=F",
         "금 선물 ($)": "GC=F"
     },
-    "📈 주가지수 및 선물": {
+    "🇺🇸 미국 주가지수 및 선물": {
         "S&P 500": "^GSPC",
         "S&P 500 선물 (ES)": "ES=F",
         "나스닥 100": "^NDX",
-        "나스닥 선물 (NQ)": "NQ=F",
-        "VIX 변동성 지수": "^VIX"
+        "나스닥 선물 (NQ)": "NQ=F"
+    },
+    "🌏 아시아 주요 주가지수": {
+        "코스피 (KOSPI)": "^KS11",
+        "닛케이 225 (Nikkei)": "^N225",
+        "상하이 종합 (SSE)": "000001.SS",
+        "항셍 지수 (HSI)": "^HSI"
     }
 }
 
@@ -100,10 +105,8 @@ def fetch_ticker_data(symbol, period="5d"):
     except Exception:
         return None
 
-# FRED 하이일드 스프레드 수집 (API Key 우선 + 다이렉트 폴백)
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_fred_hy_spread():
-    # 1. Secrets에 등록된 FRED 공식 API Key가 있는 경우 (차단 위험 0%)
     api_key = st.secrets.get("fred", {}).get("api_key", None)
     if api_key:
         try:
@@ -122,7 +125,6 @@ def fetch_fred_hy_spread():
         except Exception:
             pass
 
-    # 2. API Key 미설정 시 정밀 브라우저 헤더를 사용한 다이렉트 다운로드 시도
     try:
         url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2"
         headers = {
@@ -189,8 +191,14 @@ for cat_name, tickers in MACRO_CATEGORIES.items():
         else:
             collected_data[cat_name].append({"name": name, "price_str": "N/A", "prev_str": "N/A", "delta_str": "N/A", "status": "fail"})
 
+# 변동성 및 신용 데이터 수집
+vix_hist = fetch_ticker_data("^VIX", period="1mo")
+move_hist = fetch_ticker_data("^MOVE", period="1mo")
+hy_df = fetch_fred_hy_spread()
+
+# 텍스트 리포트 문자열 생성 (전체 지표 종합)
 lines = [
-    "📌 [글로벌 매크로 지표 브리핑]",
+    "📌 [글로벌 매크로 지표 종합 브리핑]",
     f"⏱ 기준 시각: {now_str}",
     "※ 변동 기준: 직전 거래일 종가 대비 (+, - 수치 및 %)",
     "=" * 55
@@ -204,6 +212,7 @@ for cat_name, items in collected_data.items():
         else:
             lines.append(f"• {item['name']:<20} : {item['price_str']:>9} | {item['delta_str']}")
 
+# 10Y-2Y 스프레드 브리핑 추가
 if rate_10y_curr is not None and rate_2y_curr is not None:
     curr_spread = rate_10y_curr - rate_2y_curr
     prev_spread = rate_10y_prev - rate_2y_prev
@@ -211,6 +220,20 @@ if rate_10y_curr is not None and rate_2y_curr is not None:
     lines.append("\n📊 주요 거시 스프레드")
     lines.append("-" * 45)
     lines.append(f"• 10Y-2Y 장단기 금리차  : {curr_spread:>8.2f}%p (전일: {prev_spread:>8.2f}%p) | 전일비 {spread_delta:+.2f}%p")
+
+# 신용 & 변동성 브리핑 추가
+lines.append("\n⚡ 신용 및 시장 변동성 지표")
+lines.append("-" * 45)
+if vix_hist is not None and len(vix_hist) >= 2:
+    v_c, v_p = vix_hist['Close'].iloc[-1], vix_hist['Close'].iloc[-2]
+    lines.append(f"• CBOE VIX (주식)     : {v_c:>8.2f} pt (전일: {v_p:>8.2f}) | 전일비 {v_c-v_p:+.2f} ({((v_c-v_p)/v_p)*100:+.2f}%)")
+if move_hist is not None and len(move_hist) >= 2:
+    m_c, m_p = move_hist['Close'].iloc[-1], move_hist['Close'].iloc[-2]
+    lines.append(f"• ICE BofA MOVE (채권) : {m_c:>8.2f} pt (전일: {m_p:>8.2f}) | 전일비 {m_c-m_p:+.2f} ({((m_c-m_p)/m_p)*100:+.2f}%)")
+if hy_df is not None and len(hy_df) >= 2:
+    h_c, h_p = hy_df['BAMLH0A0HYM2'].iloc[-1], hy_df['BAMLH0A0HYM2'].iloc[-2]
+    h_dt = hy_df.index[-1].strftime('%m-%d')
+    lines.append(f"• 하이일드 OAS ({h_dt}) : {h_c:>8.2f}%p (전일: {h_p:>8.2f}%p) | 전일비 {h_c-h_p:+.2f}%p")
 
 lines.append("\n" + "=" * 55)
 report_text = "\n".join(lines)
@@ -227,7 +250,7 @@ with header_left:
 with header_right:
     st.write("")
     with st.popover("📋 텍스트 브리핑 보기 / 복사", use_container_width=True):
-        st.markdown("**현재 시세 텍스트 브리핑**")
+        st.markdown("**현재 시세 텍스트 종합 브리핑**")
         st.caption("우측 상단 복사 아이콘(📋)을 눌러 즉시 복사하세요.")
         st.code(report_text, language="text")
 
@@ -282,7 +305,7 @@ if rate_10y_curr is not None and rate_2y_curr is not None:
     else:
         status_title = "✅ 정상 (Normal)"
         status_color = "green"
-        status_desc = "장기 미래의 불확실성(프리미엄)으로 인해 장기 금리가 더 높은 정상 상태입니다. **(경제의 점진적인 성장 및 안정적 확장)**"
+        status_desc = "장기 미래의 불확실성(프리미엄)으로 인해 장기 금리가 더 높은 정상 상태입니다. **(경제의 점진적인 성장 및 확장)**"
 
     sc1, sc2 = st.columns([1, 2])
     with sc1:
@@ -364,10 +387,6 @@ st.divider()
 # ==========================================
 st.subheader("⚡ 신용 리스크 및 시장 변동성 (Credit & Volatility)")
 st.caption("주식·채권 시장의 가격 변동성과 기업 자금시장의 부도 위험(신용 스프레드)을 종합 모니터링합니다.")
-
-vix_hist = fetch_ticker_data("^VIX", period="1mo")
-move_hist = fetch_ticker_data("^MOVE", period="1mo")
-hy_df = fetch_fred_hy_spread()
 
 col_v, col_m, col_h = st.columns(3)
 
@@ -451,7 +470,6 @@ with col_h:
         st.markdown(f"상태: :{h_color}[**{h_status}**] (직전: `{h_prev:.2f}%p`)")
     else:
         st.metric(label="하이일드 스프레드", value="로드 실패")
-        st.caption("ℹ️ Secrets에 `[fred] api_key`를 등록하면 즉시 정상 로드됩니다.")
 
 # 신용 & 변동성 해석 모델 테이블
 st.markdown("#### 📖 신용 및 변동성 핵심 해석 기준표")
@@ -545,7 +563,7 @@ with risk_tab2:
         )
         st.plotly_chart(fig_hy, use_container_width=True)
     else:
-        st.warning("하이일드 스프레드 데이터를 불러오지 못했습니다. Streamlit Cloud Secrets에 `[fred] api_key`를 등록해주세요.")
+        st.warning("하이일드 스프레드 데이터를 불러오지 못했습니다.")
 
 st.divider()
 
