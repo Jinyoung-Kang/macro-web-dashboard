@@ -168,7 +168,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
         except Exception:
             return None
 
-    # 범용 FRED 시리즈 수집 함수 (API Key 우선 + 웹 Direct 다운로드 폴백)
+    # 범용 FRED 데이터 수집 함수
     @st.cache_data(ttl=3600, show_spinner=False)
     def fetch_fred_series(series_id: str):
         api_key = None
@@ -219,6 +219,30 @@ if menu_selection == "📊 거시경제 매크로 지표":
             pass
         return None
 
+    # 3M 금융 CP 스프레드 전용 수집 함수 (일별 DCPF3M - 일별 DTB3)
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def fetch_fred_cp_spread():
+        # 일별 3개월 금융 CP 금리 (DCPF3M) & 일별 3개월 국채 금리 (DTB3)
+        cp_df = fetch_fred_series("DCPF3M")
+        tb_df = fetch_fred_series("DTB3")
+        
+        # DTB3 대체 후보: DGS3MO
+        if tb_df is None or tb_df.empty:
+            tb_df = fetch_fred_series("DGS3MO")
+
+        if cp_df is not None and tb_df is not None and not cp_df.empty and not tb_df.empty:
+            s_cp = cp_df.iloc[:, 0].copy()
+            s_tb = tb_df.iloc[:, 0].copy()
+            
+            s_cp.index = pd.to_datetime(s_cp.index).normalize()
+            s_tb.index = pd.to_datetime(s_tb.index).normalize()
+            
+            merged = pd.DataFrame({'CP': s_cp, 'TB': s_tb}).ffill().dropna()
+            if not merged.empty and len(merged) >= 2:
+                merged['CP_SPREAD'] = merged['CP'] - merged['TB']
+                return merged
+        return None
+
     collected_data = {}
     rate_10y_curr, rate_10y_prev = None, None
     rate_2y_curr, rate_2y_prev = None, None
@@ -267,16 +291,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
     move_hist = fetch_ticker_data("^MOVE", period="1mo")
     hy_df = fetch_fred_series("BAMLH0A0HYM2")
     stlfsi_df = fetch_fred_series("STLFSI4")
-    
-    # 3M 금융 CP 스프레드 연산 (3M Financial CP Rate - 3M T-Bill Rate)
-    cp3m_df = fetch_fred_series("RIFSPPFAAD90NBM")
-    tb3m_df = fetch_fred_series("DTB3")
-    cp_spread_df = None
-    if cp3m_df is not None and tb3m_df is not None and not cp3m_df.empty and not tb3m_df.empty:
-        merged_cp = pd.DataFrame({'CP': cp3m_df['RIFSPPFAAD90NBM'], 'TB': tb3m_df['DTB3']}).ffill().dropna()
-        if not merged_cp.empty:
-            merged_cp['CP_SPREAD'] = merged_cp['CP'] - merged_cp['TB']
-            cp_spread_df = merged_cp
+    cp_spread_df = fetch_fred_cp_spread()
 
     def clean_category_title(text: str) -> str:
         return re.sub(r':gray\[(.*)\]', r'\1', text)
@@ -467,7 +482,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
     st.subheader("⚡ 신용 리스크, 은행권 및 시장 변동성 (Credit & Liquidity Risk)")
     st.caption("주식·채권 가격 변동성, 기업 부도 위험(HY OAS), 글로벌 은행권 단기 자금경색(3M CP) 및 종합 금융스트레스(STLFSI4)를 모니터링합니다.")
 
-    # 상단 3개: 변동성 & 기업 신용
+    # 상단 3개 카드
     col_v, col_m, col_h = st.columns(3)
 
     # 1) VIX 카드
@@ -551,10 +566,10 @@ if menu_selection == "📊 거시경제 매크로 지표":
         else:
             st.metric(label="하이일드 스프레드", value="로드 실패")
 
-    # 하단 2개: 은행권 단기 유동성 & 종합 금융 스트레스
+    # 하단 2개 카드: 은행권 단기 유동성 & 종합 금융 스트레스
     col_cp, col_fsi = st.columns(2)
 
-    # 4) 3M 금융 CP 스프레드 카드 (현대판 TED 스프레드)
+    # 4) 3M 금융 CP 스프레드 카드
     with col_cp:
         if cp_spread_df is not None and len(cp_spread_df) >= 2:
             cp_curr = cp_spread_df['CP_SPREAD'].iloc[-1]
@@ -575,7 +590,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
                 label=f"3M 금융 CP 스프레드 (은행권 자금위험) :gray[[1일 지연 {cp_date} EOD]]",
                 value=f"{cp_curr:.2f} %p",
                 delta=f"{cp_delta:+.2f} %p",
-                help="3개월 AA등급 금융 CP 금리 - 3개월 국채(T-Bill) 금리 차이 (현대판 TED 스프레드 대체 지표)"
+                help="3개월 AA등급 금융 CP 금리(DCPF3M) - 3개월 국채(DTB3) 금리 차이 (현대판 TED 스프레드 대체 지표)"
             )
             st.markdown(f"상태: :{cp_color}[**{cp_status}**] (직전: `{cp_prev:.2f}%p`)")
         else:
@@ -1035,7 +1050,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
         else:
             aum_krw_str = f"약 {total_aum_krw/1e8:,.0f}억 원"
 
-        # 1. 메인 요약 메트릭 카드 (원화 환산 병기)
+        # 1. 메인 요약 메트릭 카드
         m1, m2, m3, m4 = st.columns(4)
         m1.metric(
             "총 운용자산 (AUM)", 
