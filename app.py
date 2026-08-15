@@ -47,7 +47,7 @@ if not check_password():
 # ==========================================
 # 1. 사이드바 네비게이션 & 갱신 설정
 # ==========================================
-st.sidebar.header("대시보드 메뉴")
+st.sidebar.header("🧭 대시보드 메뉴")
 menu_selection = st.sidebar.radio(
     "이동할 메뉴를 선택하세요",
     ["📊 거시경제 매크로 지표", "📑 기관 13F 포트폴리오 분석"],
@@ -449,40 +449,18 @@ if menu_selection == "📊 거시경제 매크로 지표":
         else:
             st.metric("하이일드 스프레드", "로드 실패")
 
-    st.divider()
-
-    # 단독 및 다중 차트
-    st.subheader("지표별 기간별 단독 차트")
-    ALL_TICKERS = {}
-    for cat in MACRO_CATEGORIES.values():
-        ALL_TICKERS.update(cat)
-
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        selected_name = st.selectbox("조회할 단일 지표 선택", list(ALL_TICKERS.keys()), format_func=clean_tag_ui)
-    with c2:
-        period = st.selectbox("조회 기간", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3, key="single_period")
-
-    selected_symbol = ALL_TICKERS[selected_name]
-    df = fetch_ticker_data(selected_symbol, period=period)
-    if df is not None and not df.empty:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name=clean_tag_ui(selected_name), line=dict(color='#0066FF', width=2)))
-        fig.update_layout(title=f"{clean_tag_ui(selected_name)} ({selected_symbol}) 상세 차트", xaxis_title="일자", yaxis_title="수치/가격", hovermode="x unified", margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig, use_container_width=True)
-
 # ==============================================================================
-# MENU 2: 기관 13F 포트폴리오 분석 (Gemini 정규 모델 연동)
+# MENU 2: 기관 13F 포트폴리오 분석 (트리맵 개선 & QoQ 기간별 비중 추이 신설)
 # ==============================================================================
 elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     
-    st.title("📑 대가들의 포트폴리오 (13F Holdings Analysis)")
+    st.title("📑 대가들의 포트폴리오 (13F Holdings & QoQ Analysis)")
     components.html(live_clock_html, height=45)
-    st.caption("SEC EDGAR 공식 공시 데이터 기반 미국 주요 기관 투자자 포트폴리오 분석 & Gemini Pro AI 리포트")
+    st.caption("SEC EDGAR 공식 공시 데이터 기반 미국 주요 기관 투자자 포트폴리오 분석 & 기간별 비중 추적")
     
     INSTITUTIONS = {
-        "🇰🇷 국민연금 (National Pension Service)": {"cik": "0001608046", "desc": "글로벌 자산배분 및 미국 대형 우량주 중심 장기 투자"},
         "🇺🇸 버크셔 해서웨이 (Berkshire Hathaway)": {"cik": "0001067983", "desc": "워런 버핏의 가치투자 포트폴리오, 핵심 우량주 집중"},
+        "🇰🇷 국민연금 (National Pension Service)": {"cik": "0001608046", "desc": "글로벌 자산배분 및 미국 대형 우량주 중심 장기 투자"},
         "🇺🇸 듀케인 패밀리 오피스 (Duquesne Family Office)": {"cik": "0001536411", "desc": "스탠리 드럭켄밀러의 탑다운 매크로 & AI 성장주 집중 베팅"},
         "🇺🇸 브리지워터 어소시에이츠 (Bridgewater)": {"cik": "0001350694", "desc": "레이 달리오 설립, 올웨더 및 글로벌 매크로 헤지펀드"},
         "🇺🇸 사이언 자산운용 (Scion Asset Management)": {"cik": "0001649339", "desc": "마이클 버리의 역발상 딥밸류 및 숏(풋옵션)/롱 전략"},
@@ -493,44 +471,20 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     selected_inst_name = st.selectbox(
         "분석할 기관을 선택하세요",
         options=list(INSTITUTIONS.keys()),
-        index=1
+        index=0
     )
     
     inst_info = INSTITUTIONS[selected_inst_name]
     st.info(f"💡 **기관 소개:** {inst_info['desc']} (SEC CIK: `{inst_info['cik']}`)", icon="ℹ️")
 
+    # 단일 13F 보고서 파싱 함수
     @st.cache_data(ttl=86400, show_spinner=False)
-    def fetch_sec_13f(cik: str):
-        user_agent = st.secrets.get("sec", {}).get("user_agent", "MacroDashboard user@gmail.com")
+    def parse_single_13f(cik: str, acc_clean: str, accession_number: str, report_date: str, user_agent: str):
         headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
+        dir_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/index.json"
         
         try:
-            sub_url = f"https://data.sec.gov/submissions/CIK{cik.zfill(10)}.json"
-            r = requests.get(sub_url, headers=headers, timeout=15)
-            if r.status_code != 200:
-                return None, f"SEC API 접근 실패 (상태 코드: {r.status_code})"
-            
-            sub_data = r.json()
-            recent = sub_data.get('filings', {}).get('recent', {})
-            forms = recent.get('form', [])
-            
-            f_idx = None
-            for idx, f in enumerate(forms):
-                if f in ['13F-HR', '13F-HR/A']:
-                    f_idx = idx
-                    break
-            
-            if f_idx is None:
-                return None, "최근 13F-HR 보고서를 찾을 수 없습니다."
-            
-            accession_number = recent['accessionNumber'][f_idx]
-            report_date = recent['reportDate'][f_idx]
-            filing_date = recent['filingDate'][f_idx]
-            acc_clean = accession_number.replace('-', '')
-            
-            dir_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/index.json"
             dir_resp = requests.get(dir_url, headers=headers, timeout=15)
-            
             xml_filename = None
             if dir_resp.status_code == 200:
                 dir_data = dir_resp.json()
@@ -560,15 +514,14 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                                     break
 
             if not xml_filename:
-                return None, "13F Information Table XML 파일을 찾을 수 없습니다."
+                return None
 
             xml_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{xml_filename}"
             xml_resp = requests.get(xml_url, headers=headers, timeout=25)
             if xml_resp.status_code != 200:
-                return None, f"XML 파일 다운로드 실패 (상태 코드: {xml_resp.status_code})"
+                return None
 
             root = ET.fromstring(xml_resp.content)
-            
             holdings = []
             for child in root:
                 tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
@@ -577,7 +530,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                     for elem in child:
                         t = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
                         if t == 'nameOfIssuer':
-                            row['name'] = elem.text
+                            row['name'] = elem.text.strip().upper() if elem.text else ""
                         elif t == 'titleOfClass':
                             row['class'] = elem.text
                         elif t == 'cusip':
@@ -595,14 +548,11 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                                         row['shares'] = float(sub.text)
                                     except:
                                         row['shares'] = 0.0
-                        elif t == 'putCall':
-                            row['putCall'] = elem.text
-                    
-                    if 'name' in row and row.get('value', 0) > 0:
+                    if row.get('name') and row.get('value', 0) > 0:
                         holdings.append(row)
 
             if not holdings:
-                return None, "파싱된 주식 보유 데이터가 없습니다."
+                return None
 
             df = pd.DataFrame(holdings)
             total_v = df['value'].sum()
@@ -615,62 +565,249 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 'class': 'first',
                 'cusip': 'first'
             })
-            
-            df = df.sort_values(by='value', ascending=False).reset_index(drop=True)
             df['weight'] = (df['value'] / df['value'].sum()) * 100
+            df['report_date'] = report_date
+            return df
+        except Exception:
+            return None
 
-            meta = {
-                "report_date": report_date,
-                "filing_date": filing_date,
-                "accession_number": accession_number,
-                "total_aum": df['value'].sum(),
-                "total_count": len(df),
-                "top10_weight": df.head(10)['weight'].sum()
-            }
-            return (df, meta), None
+    # 최근 4분기 공시 목록 및 전체 이력 수집
+    @st.cache_data(ttl=86400, show_spinner=False)
+    def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
+        user_agent = st.secrets.get("sec", {}).get("user_agent", "MacroDashboard user@gmail.com")
+        headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
+        
+        try:
+            sub_url = f"https://data.sec.gov/submissions/CIK{cik.zfill(10)}.json"
+            r = requests.get(sub_url, headers=headers, timeout=15)
+            if r.status_code != 200:
+                return None, f"SEC API 접근 실패 (상태 코드: {r.status_code})"
+            
+            sub_data = r.json()
+            recent = sub_data.get('filings', {}).get('recent', {})
+            forms = recent.get('form', [])
+            
+            quarters_to_fetch = []
+            seen_dates = set()
+            
+            for idx, f in enumerate(forms):
+                if f in ['13F-HR', '13F-HR/A']:
+                    r_date = recent['reportDate'][idx]
+                    if r_date not in seen_dates:
+                        seen_dates.add(r_date)
+                        quarters_to_fetch.append({
+                            "accession_number": recent['accessionNumber'][idx],
+                            "report_date": r_date,
+                            "filing_date": recent['filingDate'][idx]
+                        })
+                    if len(quarters_to_fetch) >= max_quarters:
+                        break
 
+            if not quarters_to_fetch:
+                return None, "13F 공시 이력을 찾을 수 없습니다."
+
+            parsed_dfs = []
+            for q in quarters_to_fetch:
+                acc_clean = q['accession_number'].replace('-', '')
+                df_q = parse_single_13f(cik, acc_clean, q['accession_number'], q['report_date'], user_agent)
+                if df_q is not None and not df_q.empty:
+                    parsed_dfs.append((df_q, q))
+
+            if not parsed_dfs:
+                return None, "13F 데이터를 파싱하지 못했습니다."
+
+            return parsed_dfs, None
         except Exception as e:
             return None, f"오류 발생: {str(e)}"
 
-    with st.spinner("SEC EDGAR에서 최신 13F 공시 데이터를 수집 및 분석 중입니다..."):
-        result, error = fetch_sec_13f(inst_info['cik'])
+    with st.spinner("SEC EDGAR에서 최근 분기별 13F 공시 데이터(최대 4개 분기)를 수집 및 비교 분석 중입니다..."):
+        history_results, err_msg = fetch_sec_13f_multi_quarters(inst_info['cik'], max_quarters=4)
 
-    if error:
-        st.error(f"⚠️ {error}")
-        st.caption("SEC API 일시적 지연이거나 User-Agent 헤더 규정 오류일 수 있습니다.")
-    elif result:
-        df_holdings, meta = result
+    if err_msg or not history_results:
+        st.error(f"⚠️ {err_msg if err_msg else '데이터를 불러올 수 없습니다.'}")
+    else:
+        # 최신 분기 데이터 및 메타데이터 추출
+        latest_df, latest_meta_info = history_results[0]
+        latest_df = latest_df.sort_values(by='value', ascending=False).reset_index(drop=True)
         
+        meta = {
+            "report_date": latest_meta_info['report_date'],
+            "filing_date": latest_meta_info['filing_date'],
+            "total_aum": latest_df['value'].sum(),
+            "total_count": len(latest_df),
+            "top10_weight": latest_df.head(10)['weight'].sum()
+        }
+
         # 1. 메인 요약 메트릭 카드
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("총 운용자산 (AUM)", f"${meta['total_aum']/1e9:,.2f} B", help="13F 공시 대상 미국 주식 총 평가액")
         m2.metric("보유 종목 수", f"{meta['total_count']:,} 개")
         m3.metric("Top 10 집중도", f"{meta['top10_weight']:.1f} %", help="상위 10개 종목이 전체 포트폴리오에서 차지하는 비중")
-        m4.metric("보고서 기준일 (QoQ)", meta['report_date'], help=f"공시 제출일: {meta['filing_date']}")
+        m4.metric("최신 보고서 기준일 (QoQ)", meta['report_date'], help=f"공시 제출일: {meta['filing_date']}")
 
         st.divider()
 
-        # 2. 포트폴리오 비중 시각화
-        st.subheader("📊 포트폴리오 비중 인터랙티브 시각화")
-        tab_v1, tab_v2 = st.tabs(["🌳 포트폴리오 트리맵 (Treemap)", "📈 상위 10개 종목 비중"])
+        # 2. 다차원 시각화 탭 (트리맵 개선 + QoQ 기간별 비중 추이)
+        st.subheader("📊 포트폴리오 시각화 및 기간별 비중 추이")
+        tab_v1, tab_v2, tab_v3, tab_v4 = st.tabs([
+            "🌳 포트폴리오 트리맵 (Treemap)", 
+            "📈 기간별 비중 변화 추이 (QoQ History)",
+            "🔄 직전 분기 대비 매수/매도 변동 (QoQ Changes)",
+            "📊 상위 10개 종목 비중"
+        ])
         
+        # TAB 1: 가독성 극대화 & 중앙 정렬 트리맵
         with tab_v1:
-            df_tree = df_holdings.head(50).copy()
-            df_tree['label'] = df_tree['name'] + "<br>" + df_tree['weight'].apply(lambda x: f"{x:.2f}%") + "<br>($" + (df_tree['value']/1e6).apply(lambda x: f"{x:,.1f}M") + ")"
+            df_tree = latest_df.head(40).copy()
+            df_tree['value_m'] = df_tree['value'] / 1e6
+            
+            # 중앙 정렬 라벨 텍스트
+            df_tree['display_label'] = (
+                "<b>" + df_tree['name'] + "</b><br>" + 
+                df_tree['weight'].apply(lambda x: f"{x:.2f}%") + "<br>" + 
+                df_tree['value_m'].apply(lambda x: f"${x:,.1f}M")
+            )
+            
             fig_tree = px.treemap(
                 df_tree,
                 path=['name'],
                 values='value',
-                title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top 50)",
+                title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top 40, {meta['report_date']} 기준)",
                 color='weight',
-                color_continuous_scale='Blues'
+                color_continuous_scale='Tealgrn'  # 가독성 뛰어난 청록/에메랄드 팔레트
             )
-            fig_tree.update_traces(textinfo="label", textfont=dict(size=13))
-            fig_tree.update_layout(margin=dict(l=10, r=10, t=40, b=10))
+            
+            # 타일 정중앙 정렬 + 선명한 화이트 폰트 + 세련된 외곽선
+            fig_tree.update_traces(
+                text=df_tree['display_label'],
+                textinfo="text",
+                textposition="middle center",
+                insidetextfont=dict(size=13, color="#FFFFFF", family="Arial, sans-serif"),
+                marker=dict(line=dict(color="#111827", width=1.5)),
+                hovertemplate="<b>%{label}</b><br>평가액: $%{value:,.0f}<br>포트폴리오 비중: %{color:.2f}%<extra></extra>"
+            )
+            fig_tree.update_layout(
+                margin=dict(l=10, r=10, t=40, b=10),
+                coloraxis_colorbar=dict(title="비중 (%)")
+            )
             st.plotly_chart(fig_tree, use_container_width=True)
 
+        # TAB 2: 기간별(분기별) 상위 종목 비중 변화 선 그래프
         with tab_v2:
-            df_top10 = df_holdings.head(10).sort_values(by='weight', ascending=True)
+            all_history_dfs = []
+            for df_q, q_meta in history_results:
+                temp_df = df_q.copy()
+                all_history_dfs.append(temp_df)
+            
+            combined_hist = pd.concat(all_history_dfs, ignore_index=True)
+            
+            # 최신 기준 상위 7개 종목 선정
+            top_tickers = latest_df.head(7)['name'].tolist()
+            
+            df_top_hist = combined_hist[combined_hist['name'].isin(top_tickers)].copy()
+            df_top_hist['report_date'] = pd.to_datetime(df_top_hist['report_date'])
+            df_top_hist = df_top_hist.sort_values(by='report_date', ascending=True)
+            df_top_hist['report_date_str'] = df_top_hist['report_date'].dt.strftime('%Y-%m-%d')
+
+            fig_trend = go.Figure()
+            
+            colors = px.colors.qualitative.Plotly
+            for idx, ticker in enumerate(top_tickers):
+                sub_df = df_top_hist[df_top_hist['name'] == ticker]
+                fig_trend.add_trace(go.Scatter(
+                    x=sub_df['report_date_str'],
+                    y=sub_df['weight'],
+                    mode='lines+markers+text',
+                    name=ticker,
+                    text=sub_df['weight'].apply(lambda x: f"{x:.1f}%"),
+                    textposition='top center',
+                    line=dict(width=2.5, color=colors[idx % len(colors)]),
+                    marker=dict(size=7)
+                ))
+
+            fig_trend.update_layout(
+                title=f"{selected_inst_name} 상위 핵심 종목 분기별(QoQ) 비중 추이 (최근 4분기)",
+                xaxis_title="공시 기준일 (분기)",
+                yaxis_title="포트폴리오 비중 (%)",
+                hovermode="x unified",
+                margin=dict(l=20, r=20, t=40, b=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+        # TAB 3: 직전 분기 대비(QoQ) 매수/매도 변동 내역
+        with tab_v3:
+            if len(history_results) >= 2:
+                prev_df, prev_meta = history_results[1]
+                
+                # Outer Merge로 신규/청산/증감 추적
+                merged_qoq = pd.merge(
+                    latest_df[['name', 'weight', 'value', 'shares']],
+                    prev_df[['name', 'weight', 'value', 'shares']],
+                    on='name',
+                    how='outer',
+                    suffixes=('_curr', '_prev')
+                ).fillna(0)
+                
+                merged_qoq['weight_diff'] = merged_qoq['weight_curr'] - merged_qoq['weight_prev']
+                merged_qoq['shares_diff'] = merged_qoq['shares_curr'] - merged_qoq['shares_prev']
+                merged_qoq['value_diff'] = merged_qoq['value_curr'] - merged_qoq['value_prev']
+                
+                def classify_change(row):
+                    if row['shares_prev'] == 0 and row['shares_curr'] > 0:
+                        return "🟢 신규 매수 (New Buy)"
+                    elif row['shares_curr'] == 0 and row['shares_prev'] > 0:
+                        return "🔴 전량 매도 (Sold Out)"
+                    elif row['shares_diff'] > 0:
+                        return "🔵 비중 확대 (Increased)"
+                    elif row['shares_diff'] < 0:
+                        return "🟡 비중 축소 (Decreased)"
+                    else:
+                        return "⚪ 유지 (Unchanged)"
+
+                merged_qoq['action'] = merged_qoq.apply(classify_change, axis=1)
+
+                st.markdown(f"**기준:** `{latest_meta_info['report_date']}` vs 직전 분기 `{prev_meta['report_date']}`")
+                
+                # 비중 변동 상위 Top 10 바차트
+                top_increased = merged_qoq[merged_qoq['weight_diff'] > 0].sort_values(by='weight_diff', ascending=False).head(5)
+                top_decreased = merged_qoq[merged_qoq['weight_diff'] < 0].sort_values(by='weight_diff', ascending=True).head(5)
+                qoq_bar_df = pd.concat([top_decreased, top_increased])
+                
+                if not qoq_bar_df.empty:
+                    fig_qoq = go.Figure(go.Bar(
+                        x=qoq_bar_df['weight_diff'],
+                        y=qoq_bar_df['name'],
+                        orientation='h',
+                        marker=dict(
+                            color=['#EF4444' if x < 0 else '#10B981' for x in qoq_bar_df['weight_diff']]
+                        ),
+                        text=qoq_bar_df['weight_diff'].apply(lambda x: f"{x:+.2f}%p"),
+                        textposition='outside'
+                    ))
+                    fig_qoq.update_layout(
+                        title="직전 분기 대비 비중 변동 상위 종목 (%p)",
+                        xaxis_title="비중 증감폭 (%p)",
+                        yaxis_title="",
+                        margin=dict(l=20, r=40, t=40, b=20)
+                    )
+                    st.plotly_chart(fig_qoq, use_container_width=True)
+
+                # 변동 내역 테이블
+                qoq_display = merged_qoq[merged_qoq['action'] != "⚪ 유지 (Unchanged)"].sort_values(by='weight_diff', key=abs, ascending=False).head(30)
+                qoq_table = qoq_display[['name', 'action', 'weight_curr', 'weight_diff', 'value_curr', 'shares_diff']].copy()
+                qoq_table.columns = ['종목명', '투자 활동', '현재 비중', '비중 증감(%p)', '현재 평가액($)', '주식수 증감']
+                qoq_table['현재 비중'] = qoq_table['현재 비중'].map('{:.2f}%'.format)
+                qoq_table['비중 증감(%p)'] = qoq_table['비중 증감(%p)'].map('{:+.2f}%p'.format)
+                qoq_table['현재 평가액($)'] = qoq_table['현재 평가액($)'].map('${:,.0f}'.format)
+                qoq_table['주식수 증감'] = qoq_table['주식수 증감'].map('{:+,.0f}'.format)
+                st.dataframe(qoq_table, use_container_width=True, hide_index=True)
+            else:
+                st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
+
+        # TAB 4: 상위 10개 종목 비중 바차트
+        with tab_v4:
+            df_top10 = latest_df.head(10).sort_values(by='weight', ascending=True)
             fig_bar = go.Figure(go.Bar(
                 x=df_top10['weight'],
                 y=df_top10['name'],
@@ -691,86 +828,10 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 
         # 3. 전체 보유 종목 상세 표
         st.subheader("📋 전체 보유 지분 상세 목록")
-        df_display = df_holdings[['name', 'weight', 'value', 'shares', 'class', 'cusip']].copy()
+        df_display = latest_df[['name', 'weight', 'value', 'shares', 'class', 'cusip']].copy()
         df_display.columns = ['종목명 (Issuer)', '비중 (%)', '평가액 ($)', '보유 주식수', '주식 종류', 'CUSIP']
         df_display['비중 (%)'] = df_display['비중 (%)'].map('{:.2f}%'.format)
         df_display['평가액 ($)'] = df_display['평가액 ($)'].map('${:,.0f}'.format)
         df_display['보유 주식수'] = df_display['보유 주식수'].map('{:,.0f}'.format)
         
         st.dataframe(df_display, use_container_width=True, hide_index=True)
-
-        st.divider()
-
-        # 4. Gemini AI 심층 전략 리포트 생성기 (정규 모델 리스트 순차 시도)
-        st.subheader("🤖 Gemini AI 심층 투자 전략 리포트")
-        st.caption("정량적 13F 데이터셋을 Google Gemini 모델에 전달하여 기관의 투자 철학과 거시경제 베팅 방향을 분석합니다.")
-
-        def generate_gemini_report(inst_name: str, meta_data: dict, top_df: pd.DataFrame) -> str:
-            gemini_key = st.secrets.get("gemini", {}).get("api_key", None)
-            if not gemini_key:
-                return "⚠️ Streamlit Secrets에 `[gemini] api_key`가 등록되지 않았습니다. Secrets에 API 키를 설정해주세요."
-
-            top_holdings_str = "\n".join([
-                f"- {row['name']}: 비중 {row['weight']:.2f}% (평가액: ${row['value']/1e6:,.1f}M, 주식수: {row['shares']:,.0f})"
-                for _, row in top_df.head(15).iterrows()
-            ])
-
-            prompt = f"""
-당신은 월스트리트 최고의 거시경제 펀드 전략가이자 헤지펀드 수석 애널리스트입니다.
-아래 제공된 미국 SEC 13F 최신 공시 데이터를 바탕으로 **{inst_name}**의 이번 분기 포트폴리오를 심층 분석하고 전문적인 투자 전략 리포트를 작성해주세요.
-
-[기관 및 포트폴리오 개요]
-- 기관명: {inst_name}
-- 공시 기준일: {meta_data['report_date']} (제출일: {meta_data['filing_date']})
-- 총 운용자산(AUM): ${meta_data['total_aum']/1e9:,.2f} B (10억 달러 단위)
-- 총 보유 종목 수: {meta_data['total_count']} 개
-- Top 10 종목 집중도: {meta_data['top10_weight']:.1f}%
-
-[상위 Top 15 보유 종목 현황]
-{top_holdings_str}
-
-[작성 요구사항]
-다음 4가지 핵심 섹션으로 나누어 전문적이고 논리정연한 한국어로 작성해주세요:
-1. 🎯 **이번 분기 핵심 포트폴리오 구조 및 집중도 평가**
-   - 상위 종목 집중도({meta_data['top10_weight']:.1f}%)와 핵심 베팅 종목들의 성격 분석
-2. 🏭 **주요 섹터/산업별 자산 배분 및 전략적 특징**
-   - 빅테크, 금융, 에너지, 헬스케어, 소비재 등 포트폴리오가 가리키는 산업 방향성
-3. 🌐 **거시경제(매크로) 환경과의 연계성 및 시사점**
-   - 금리, 인플레이션, 경기 사이클과 관련하여 이 기관이 어떤 시나리오에 베팅하고 있는지 분석
-4. 💡 **개인 투자자를 위한 실전 벤치마킹 포인트 & 주의점**
-   - 13F 공시 시차를 감안한 투자 아이디어 및 리스크 요인
-
-답변은 마크다운 헤더와 불릿 포인트를 활용하여 최고급 금융 리포트 양식으로 깔끔하게 작성해주세요.
-"""
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.2,
-                    "maxOutputTokens": 4096
-                }
-            }
-            
-            # Google Gemini 공식 정식 모델 엔드포인트 목록
-            models_to_try = ["gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"]
-            last_error = ""
-            
-            for model in models_to_try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
-                try:
-                    resp = requests.post(url, json=payload, timeout=45)
-                    if resp.status_code == 200:
-                        resp_json = resp.json()
-                        candidates = resp_json.get('candidates', [])
-                        if candidates and 'content' in candidates[0] and 'parts' in candidates[0]['content']:
-                            return candidates[0]['content']['parts'][0]['text']
-                    else:
-                        last_error = f"[{model}] 상태 코드 {resp.status_code}: {resp.text}"
-                except Exception as ex:
-                    last_error = f"[{model}] 통신 오류: {str(ex)}"
-
-            return f"⚠️ Gemini API 호출 실패:\n\n{last_error}"
-
-        if st.button("🚀 Gemini Pro 분석 리포트 생성", type="primary", use_container_width=True):
-            with st.spinner("Gemini AI가 13F 데이터를 정밀 분석하여 맞춤형 전략 리포트를 작성 중입니다..."):
-                report_content = generate_gemini_report(selected_inst_name, meta, df_holdings)
-                st.markdown(report_content)
