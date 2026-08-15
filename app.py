@@ -62,33 +62,33 @@ if st.sidebar.button("로그아웃", use_container_width=True):
 # 2. 매크로 지표 정의 및 데이터 수집 함수
 # ==========================================
 MACRO_CATEGORIES = {
-    "💵 통화 및 환율": {
-        "달러 인덱스 (DXY)": "DX-Y.NYB",
-        "원/달러 (USD/KRW)": "KRW=X",
-        "달러/엔 (USD/JPY)": "JPY=X",
-        "엔/원 100엔당 (JPY/KRW)": "JPYKRW=X"
+    "💵 통화 및 환율 (실시간)": {
+        "달러 인덱스 (DXY) [실시간]": "DX-Y.NYB",
+        "원/달러 (USD/KRW) [실시간]": "KRW=X",
+        "달러/엔 (USD/JPY) [실시간]": "JPY=X",
+        "엔/원 100엔당 (JPY/KRW) [실시간]": "JPYKRW=X"
     },
-    "🏛️ 미국 국채 금리": {
-        "미국채 2년물 금리(%)": "2YY=F",
-        "미국채 10년물 금리(%)": "^TNX",
-        "미국채 30년물 금리(%)": "^TYX"
+    "🏛️ 미국 국채 금리 (15분 지연)": {
+        "미국채 2년물 금리(%) [15분 지연]": "2YY=F",
+        "미국채 10년물 금리(%) [15분 지연]": "^TNX",
+        "미국채 30년물 금리(%) [15분 지연]": "^TYX"
     },
-    "🛢️ 원자재": {
-        "WTI 원유 ($)": "CL=F",
-        "브렌트유 ($)": "BZ=F",
-        "금 선물 ($)": "GC=F"
+    "🛢️ 원자재 (15분 지연)": {
+        "WTI 원유 ($) [15분 지연]": "CL=F",
+        "브렌트유 ($) [15분 지연]": "BZ=F",
+        "금 선물 ($) [15분 지연]": "GC=F"
     },
-    "🇺🇸 미국 주가지수 및 선물": {
-        "S&P 500": "^GSPC",
-        "S&P 500 선물 (ES)": "ES=F",
-        "나스닥 100": "^NDX",
-        "나스닥 선물 (NQ)": "NQ=F"
+    "🇺🇸 미국 주가지수 및 선물 (15분 지연)": {
+        "S&P 500 [15분 지연]": "^GSPC",
+        "S&P 500 선물 (ES) [15분 지연]": "ES=F",
+        "나스닥 100 [15분 지연]": "^NDX",
+        "나스닥 선물 (NQ) [15분 지연]": "NQ=F"
     },
-    "🌏 아시아 주요 주가지수": {
-        "코스피 (KOSPI)": "^KS11",
-        "닛케이 225 (Nikkei)": "^N225",
-        "상하이 종합 (SSE)": "000001.SS",
-        "항셍 지수 (HSI)": "^HSI"
+    "🌏 아시아 주요 주가지수 (15분 지연)": {
+        "코스피 (KOSPI) [15분 지연]": "^KS11",
+        "닛케이 225 (Nikkei) [15분 지연]": "^N225",
+        "상하이 종합 (SSE) [15분 지연]": "000001.SS",
+        "항셍 지수 (HSI) [15분 지연]": "^HSI"
     }
 }
 
@@ -191,12 +191,11 @@ for cat_name, tickers in MACRO_CATEGORIES.items():
         else:
             collected_data[cat_name].append({"name": name, "price_str": "N/A", "prev_str": "N/A", "delta_str": "N/A", "status": "fail"})
 
-# 변동성 및 신용 데이터 수집
 vix_hist = fetch_ticker_data("^VIX", period="1mo")
 move_hist = fetch_ticker_data("^MOVE", period="1mo")
 hy_df = fetch_fred_hy_spread()
 
-# 텍스트 리포트 문자열 생성 (전체 지표 종합)
+# 텍스트 종합 브리핑 문자열 생성
 lines = [
     "📌 [글로벌 매크로 지표 종합 브리핑]",
     f"⏱ 기준 시각: {now_str}",
@@ -208,32 +207,30 @@ for cat_name, items in collected_data.items():
     lines.append("-" * 45)
     for item in items:
         if item["status"] == "ok":
-            lines.append(f"• {item['name']:<20} : {item['price_str']:>9} (전일: {item['prev_str']:>9}) | 전일비 {item['delta_str']}")
+            lines.append(f"• {item['name']:<24} : {item['price_str']:>9} (전일: {item['prev_str']:>9}) | 전일비 {item['delta_str']}")
         else:
-            lines.append(f"• {item['name']:<20} : {item['price_str']:>9} | {item['delta_str']}")
+            lines.append(f"• {item['name']:<24} : {item['price_str']:>9} | {item['delta_str']}")
 
-# 10Y-2Y 스프레드 브리핑 추가
 if rate_10y_curr is not None and rate_2y_curr is not None:
     curr_spread = rate_10y_curr - rate_2y_curr
     prev_spread = rate_10y_prev - rate_2y_prev
     spread_delta = curr_spread - prev_spread
-    lines.append("\n📊 주요 거시 스프레드")
+    lines.append("\n📊 주요 거시 스프레드 (15분 지연)")
     lines.append("-" * 45)
-    lines.append(f"• 10Y-2Y 장단기 금리차  : {curr_spread:>8.2f}%p (전일: {prev_spread:>8.2f}%p) | 전일비 {spread_delta:+.2f}%p")
+    lines.append(f"• 10Y-2Y 장단기 금리차    : {curr_spread:>8.2f}%p (전일: {prev_spread:>8.2f}%p) | 전일비 {spread_delta:+.2f}%p")
 
-# 신용 & 변동성 브리핑 추가
 lines.append("\n⚡ 신용 및 시장 변동성 지표")
 lines.append("-" * 45)
 if vix_hist is not None and len(vix_hist) >= 2:
     v_c, v_p = vix_hist['Close'].iloc[-1], vix_hist['Close'].iloc[-2]
-    lines.append(f"• CBOE VIX (주식)     : {v_c:>8.2f} pt (전일: {v_p:>8.2f}) | 전일비 {v_c-v_p:+.2f} ({((v_c-v_p)/v_p)*100:+.2f}%)")
+    lines.append(f"• CBOE VIX [15분 지연]    : {v_c:>8.2f} pt (전일: {v_p:>8.2f}) | 전일비 {v_c-v_p:+.2f} ({((v_c-v_p)/v_p)*100:+.2f}%)")
 if move_hist is not None and len(move_hist) >= 2:
     m_c, m_p = move_hist['Close'].iloc[-1], move_hist['Close'].iloc[-2]
-    lines.append(f"• ICE BofA MOVE (채권) : {m_c:>8.2f} pt (전일: {m_p:>8.2f}) | 전일비 {m_c-m_p:+.2f} ({((m_c-m_p)/m_p)*100:+.2f}%)")
+    lines.append(f"• ICE BofA MOVE [지연/마감]: {m_c:>8.2f} pt (전일: {m_p:>8.2f}) | 전일비 {m_c-m_p:+.2f} ({((m_c-m_p)/m_p)*100:+.2f}%)")
 if hy_df is not None and len(hy_df) >= 2:
     h_c, h_p = hy_df['BAMLH0A0HYM2'].iloc[-1], hy_df['BAMLH0A0HYM2'].iloc[-2]
     h_dt = hy_df.index[-1].strftime('%m-%d')
-    lines.append(f"• 하이일드 OAS ({h_dt}) : {h_c:>8.2f}%p (전일: {h_p:>8.2f}%p) | 전일비 {h_c-h_p:+.2f}%p")
+    lines.append(f"• 하이일드 OAS [1일지연 {h_dt}]: {h_c:>8.2f}%p (전일: {h_p:>8.2f}%p) | 전일비 {h_c-h_p:+.2f}%p")
 
 lines.append("\n" + "=" * 55)
 report_text = "\n".join(lines)
@@ -310,7 +307,7 @@ if rate_10y_curr is not None and rate_2y_curr is not None:
     sc1, sc2 = st.columns([1, 2])
     with sc1:
         st.metric(
-            label="현재 10Y - 2Y 스프레드",
+            label="현재 10Y - 2Y 스프레드 [15분 지연]",
             value=f"{curr_spread:+.2f} %p",
             delta=f"{spread_delta:+.2f} %p (전일비)"
         )
@@ -408,7 +405,7 @@ with col_v:
             v_status, v_color = "공포 (Panic)", "red"
             
         st.metric(
-            label="CBOE VIX (주식 변동성)",
+            label="CBOE VIX (주식 변동성) [15분 지연]",
             value=f"{v_curr:.2f}",
             delta=f"{v_delta:+.2f} ({v_pct:+.2f}%)",
             help="S&P 500 옵션 가격 기반 30일 변동성 기대치"
@@ -435,7 +432,7 @@ with col_m:
             m_status, m_color = "발작 / 위기 (Crisis)", "red"
             
         st.metric(
-            label="ICE BofA MOVE (채권 변동성)",
+            label="ICE BofA MOVE (채권 변동성) [지연/마감]",
             value=f"{m_curr:.2f}",
             delta=f"{m_delta:+.2f} ({m_pct:+.2f}%)",
             help="미국 국채 옵션 기반 금리 변동성 지수"
@@ -462,7 +459,7 @@ with col_h:
             h_status, h_color = "신용 위기 (Crisis)", "red"
             
         st.metric(
-            label=f"하이일드 스프레드 (HY OAS, {h_date} EOD)",
+            label=f"하이일드 스프레드 (HY OAS) [1일 지연 {h_date} EOD]",
             value=f"{h_curr:.2f} %p",
             delta=f"{h_delta:+.2f} %p",
             help="ICE BofA 미국 하이일드 채권 지수 옵션조정 스프레드 (FRED Daily)"
@@ -474,10 +471,10 @@ with col_h:
 # 신용 & 변동성 해석 모델 테이블
 st.markdown("#### 📖 신용 및 변동성 핵심 해석 기준표")
 risk_model_table = {
-    "지표명": [
-        "CBOE VIX (주식 변동성)", 
-        "ICE BofA MOVE (채권 변동성)", 
-        "하이일드 스프레드 (HY OAS)"
+    "지표명 (지연 수준)": [
+        "CBOE VIX [15분 지연]", 
+        "ICE BofA MOVE [지연/마감]", 
+        "하이일드 스프레드 [1일 지연 EOD]"
     ],
     "정상 / 안정 범위": [
         "15 ~ 20 (15 미만: 과도한 낙관)", 
@@ -509,13 +506,13 @@ with risk_tab1:
     if v_chart is not None and not v_chart.empty:
         fig_vol = go.Figure()
         fig_vol.add_trace(go.Scatter(
-            x=v_chart.index, y=v_chart['Close'], mode='lines', name='VIX (주식 변동성)',
+            x=v_chart.index, y=v_chart['Close'], mode='lines', name='VIX (주식 변동성) [15분 지연]',
             line=dict(color='#FF5722', width=2)
         ))
         
         if m_chart is not None and not m_chart.empty:
             fig_vol.add_trace(go.Scatter(
-                x=m_chart.index, y=m_chart['Close'], mode='lines', name='MOVE (채권 변동성)',
+                x=m_chart.index, y=m_chart['Close'], mode='lines', name='MOVE (채권 변동성) [지연/마감]',
                 line=dict(color='#3F51B5', width=2), yaxis="y2"
             ))
             
@@ -549,7 +546,7 @@ with risk_tab2:
         fig_hy = go.Figure()
         fig_hy.add_trace(go.Scatter(
             x=filtered_hy.index, y=filtered_hy['BAMLH0A0HYM2'], mode='lines',
-            name='US High Yield OAS (%p)', line=dict(color='#D32F2F', width=2),
+            name='US High Yield OAS (%p) [1일 지연 EOD]', line=dict(color='#D32F2F', width=2),
             fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)'
         ))
         fig_hy.add_hline(y=5.0, line_dash="dot", line_color="orange", annotation_text="경계선 (5.0%p)")
@@ -621,7 +618,7 @@ with col_comp1:
     multi_selected = st.multiselect(
         "비교할 지표 선택 (다중 선택 가능)",
         options=list(ALL_TICKERS.keys()),
-        default=["원/달러 (USD/KRW)", "달러 인덱스 (DXY)"]
+        default=["원/달러 (USD/KRW) [실시간]", "달러 인덱스 (DXY) [실시간]"]
     )
 
 with col_comp2:
