@@ -6,9 +6,43 @@ from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="Global Macro Web Dashboard", layout="wide")
 
-# 사이드바: 갱신 설정
+# ==========================================
+# 0. 간이 인증 (비밀번호 잠금) 시스템
+# ==========================================
+def check_password():
+    """올바른 비밀번호가 입력되었는지 검증하고 세션 상태를 유지합니다."""
+    # Secrets에 설정된 비밀번호 가져오기 (없을 경우 기본 비밀번호 대체)
+    correct_password = st.secrets.get("auth", {}).get("password", "na0930@")
+
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    if not st.session_state.authenticated:
+        # 로그인 UI
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.markdown("### 🔒 Global Macro Dashboard")
+            st.caption("인가된 사용자만 접근할 수 있습니다.")
+            pwd_input = st.text_input("접속 비밀번호를 입력하세요", type="password")
+            
+            if st.button("로그인", type="primary", use_container_width=True):
+                if pwd_input == correct_password:
+                    st.session_state.authenticated = True
+                    st.rerun()
+                else:
+                    st.error("비밀번호가 올바르지 않습니다.")
+        return False
+    return True
+
+# 인증 실패 시 아래 메인 코드 실행 중단
+if not check_password():
+    st.stop()
+
+# ==========================================
+# 1. 사이드바: 갱신 설정 및 로그아웃
+# ==========================================
 st.sidebar.header("⚙️ 갱신 설정")
-auto_refresh_enabled = st.sidebar.checkbox("실시간 자동 새로고침 활성화", value=True)
+auto_refresh_enabled = st.sidebar.checkbox("실시간 자동 새로고침 활성화", value=False)
 refresh_interval = st.sidebar.selectbox(
     "새로고침 주기",
     options=[30, 60, 120, 300],
@@ -19,6 +53,14 @@ refresh_interval = st.sidebar.selectbox(
 if auto_refresh_enabled:
     st_autorefresh(interval=refresh_interval * 1000, key="datarefresh")
 
+st.sidebar.divider()
+if st.sidebar.button("로그아웃", use_container_width=True):
+    st.session_state.authenticated = False
+    st.rerun()
+
+# ==========================================
+# 2. 매크로 지표 정의 및 데이터 수집
+# ==========================================
 MACRO_CATEGORIES = {
     "💵 통화 및 환율": {
         "달러 인덱스 (DXY)": "DX-Y.NYB",
@@ -47,7 +89,6 @@ MACRO_CATEGORIES = {
 
 now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-# 클라우드 IP 차단 방지를 위한 캐싱 (30초간 메모리 보관)
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_ticker_data(symbol, period="5d"):
     try:
@@ -56,7 +97,6 @@ def fetch_ticker_data(symbol, period="5d"):
     except Exception:
         return None
 
-# 1. 데이터 수집 루프
 collected_data = {}
 
 for cat_name, tickers in MACRO_CATEGORIES.items():
@@ -111,7 +151,9 @@ for cat_name, items in collected_data.items():
 lines.append("\n" + "=" * 55)
 report_text = "\n".join(lines)
 
-# 2. 헤더 영역
+# ==========================================
+# 3. 헤더 영역
+# ==========================================
 header_left, header_right = st.columns([3, 1])
 
 with header_left:
@@ -127,7 +169,9 @@ with header_right:
 
 st.divider()
 
-# 3. 메인 시세 요약 카드 렌더링
+# ==========================================
+# 4. 메인 시세 요약 카드 렌더링
+# ==========================================
 st.subheader("실시간/최근 시세 요약")
 st.info("💡 **변동 수치(+/-) 기준:** 각 지표 하단의 수치는 **직전 거래일 공식 종가(Previous Close) 대비 등락폭과 등락률(%)**입니다.", icon="ℹ️")
 
@@ -151,7 +195,9 @@ for cat_name, items in collected_data.items():
 
 st.divider()
 
-# 4. 개별 지표 상세 차트
+# ==========================================
+# 5. 개별 지표 상세 차트
+# ==========================================
 st.subheader("지표별 기간별 단독 차트")
 
 ALL_TICKERS = {}
@@ -192,7 +238,9 @@ except Exception:
 
 st.divider()
 
-# 5. 다중 지표 오버레이 비교 차트
+# ==========================================
+# 6. 다중 지표 오버레이 비교 차트
+# ==========================================
 st.subheader("🔀 다중 지표 오버레이 비교 차트")
 
 col_comp1, col_comp2, col_comp3 = st.columns([2, 1, 1])
