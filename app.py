@@ -200,18 +200,20 @@ vix_hist = fetch_ticker_data("^VIX", period="1mo")
 move_hist = fetch_ticker_data("^MOVE", period="1mo")
 hy_df = fetch_fred_hy_spread()
 
-# 텍스트 가공 헬퍼 함수
+# ==========================================
+# 텍스트 가공 헬퍼 함수 (정규식 완벽 수정)
+# ==========================================
 def clean_category_title(text: str) -> str:
     """카테고리명에서 마크다운 태그만 제거하고 '(지연 수준)'은 유지"""
-    return re.sub(r':gray\[(.*?)\]', r'\1', text)
+    return re.sub(r':gray\[(.*)\]', r'\1', text)
 
 def clean_item_briefing(text: str) -> str:
-    """텍스트 브리핑용: 개별 지표명에서 지연 수준 표기를 완전히 제거"""
-    return re.sub(r'\s*:gray\[.*?\]', '', text).strip()
+    """텍스트 브리핑용: 개별 지표명에서 중첩된 :gray[...] 지연 수준 표기를 완벽 제거"""
+    return re.sub(r'\s*:gray\[.*\]', '', text).strip()
 
 def clean_tag_ui(text: str) -> str:
     """UI 셀렉트박스/차트용: 마크다운 태그만 벗기고 텍스트는 유지"""
-    return re.sub(r':gray\[(.*?)\]', r'\1', text)
+    return re.sub(r':gray\[(.*)\]', r'\1', text)
 
 # 텍스트 종합 브리핑 문자열 생성
 lines = [
@@ -221,11 +223,11 @@ lines = [
     "=" * 55
 ]
 for cat_name, items in collected_data.items():
-    # 카테고리 헤더에는 지연 수준 유지 (예: 💵 통화 및 환율 (실시간))
+    # 카테고리 헤더: 지연 수준 유지 (예: 💵 통화 및 환율 (실시간))
     lines.append(f"\n{clean_category_title(cat_name)}")
     lines.append("-" * 45)
     for item in items:
-        # 개별 지표명 옆의 지연 수준은 제거 (예: • 달러 인덱스 (DXY))
+        # 개별 지표: 지연 수준 완벽 제거 (예: • 달러 인덱스 (DXY))
         clean_name = clean_item_briefing(item['name'])
         if item["status"] == "ok":
             lines.append(f"• {clean_name:<18} : {item['price_str']:>9} (전일: {item['prev_str']:>9}) | 전일비 {item['delta_str']}")
@@ -315,7 +317,7 @@ with header_right:
 st.divider()
 
 # ==========================================
-# 4. 메인 시세 요약 카드 렌더링 (지연 수준 표기 유지)
+# 4. 메인 시세 요약 카드 렌더링
 # ==========================================
 st.subheader("실시간/최근 시세 요약")
 st.info("💡 **변동 수치(+/-) 기준:** 각 지표 하단의 수치는 **직전 거래일 공식 종가(Previous Close) 대비 등락폭과 등락률(%)**입니다.", icon="ℹ️")
