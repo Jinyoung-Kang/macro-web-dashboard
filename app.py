@@ -450,7 +450,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
             st.metric("하이일드 스프레드", "로드 실패")
 
 # ==============================================================================
-# MENU 2: 기관 13F 포트폴리오 분석 (동적 컨트롤러 & 짤림 방지 완비)
+# MENU 2: 기관 13F 포트폴리오 분석 (동적 높이 & 자동 확장/축소 완비)
 # ==============================================================================
 elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     
@@ -477,7 +477,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     inst_info = INSTITUTIONS[selected_inst_name]
     st.info(f"💡 **기관 소개:** {inst_info['desc']} (SEC CIK: `{inst_info['cik']}`)", icon="ℹ️")
 
-    # 단일 13F 보고서 파싱 함수
     @st.cache_data(ttl=86400, show_spinner=False)
     def parse_single_13f(cik: str, acc_clean: str, accession_number: str, report_date: str, user_agent: str):
         headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
@@ -571,7 +570,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
         except Exception:
             return None
 
-    # 최근 최대 8개 분기 공시 목록 및 전체 이력 수집
     @st.cache_data(ttl=86400, show_spinner=False)
     def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 8):
         user_agent = st.secrets.get("sec", {}).get("user_agent", "MacroDashboard user@gmail.com")
@@ -626,7 +624,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     if err_msg or not all_history_results:
         st.error(f"⚠️ {err_msg if err_msg else '데이터를 불러올 수 없습니다.'}")
     else:
-        # 최신 분기 데이터 및 메타데이터 추출
         latest_df, latest_meta_info = all_history_results[0]
         latest_df = latest_df.sort_values(by='value', ascending=False).reset_index(drop=True)
         
@@ -647,7 +644,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 
         st.divider()
 
-        # 2. 다차원 시각화 탭
+        # 2. 다차원 시각화 탭 (전 영역 동적 자동 확장/축소)
         st.subheader("📊 포트폴리오 시각화 및 기간별 비중 추이")
         tab_v1, tab_v2, tab_v3, tab_v4 = st.tabs([
             "🌳 포트폴리오 트리맵 (Treemap)", 
@@ -656,7 +653,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             "📊 상위 종목 비중 순위"
         ])
         
-        # TAB 1: 가독성 극대화 & 중앙 정렬 트리맵
+        # TAB 1: 트리맵 (표시 종목 수에 따라 자동 높이 확장)
         with tab_v1:
             tree_n = st.slider("트리맵 표시 종목 수", min_value=10, max_value=min(100, len(latest_df)), value=min(40, len(latest_df)), step=10, key="treemap_slider")
             df_tree = latest_df.head(tree_n).copy()
@@ -685,13 +682,17 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 marker=dict(line=dict(color="#111827", width=1.5)),
                 hovertemplate="<b>%{label}</b><br>평가액: $%{value:,.0f}<br>포트폴리오 비중: %{color:.2f}%<extra></extra>"
             )
+            
+            # 종목 수에 비례하여 높이 동적 자동 계산
+            dynamic_tree_height = max(480, int(360 + tree_n * 5.5))
             fig_tree.update_layout(
+                height=dynamic_tree_height,
                 margin=dict(l=10, r=10, t=40, b=10),
                 coloraxis_colorbar=dict(title="비중 (%)")
             )
             st.plotly_chart(fig_tree, use_container_width=True)
 
-        # TAB 2: 기간별(분기별) 상위 종목 비중 변화 선 그래프 (동적 컨트롤러 & 짤림 방지 완비)
+        # TAB 2: 기간별 비중 추이 (범례 우측 분리 & 종목 수에 따른 자동 높이 확장)
         with tab_v2:
             st.markdown("#### ⚙️ 기간별 비중 추이 조건 설정")
             col_ctl1, col_ctl2 = st.columns([1, 1])
@@ -723,7 +724,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                     format_func=lambda x: f"상위 Top {x}개 종목"
                 )
 
-            # 선택한 분기 수만큼 슬라이싱
             active_history = all_history_results[:selected_q_count]
             
             all_history_dfs = []
@@ -732,11 +732,8 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 all_history_dfs.append(temp_df)
             
             combined_hist = pd.concat(all_history_dfs, ignore_index=True)
-            
-            # 사용자 지정 개수만큼 상위 종목 추출
             default_top_tickers = latest_df.head(selected_top_n)['name'].tolist()
             
-            # 추가 옵션: 특정 종목을 직접 커스텀 선택할 수 있는 멀티 셀렉트
             custom_tickers = st.multiselect(
                 "특정 종목만 직접 선택하여 비교 (선택 시 상위 N 대신 아래 선택 종목만 표기)",
                 options=latest_df['name'].tolist(),
@@ -750,7 +747,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             df_top_hist = df_top_hist.sort_values(by='report_date', ascending=True)
             df_top_hist['report_date_str'] = df_top_hist['report_date'].dt.strftime('%Y-%m-%d')
 
-            # 풍부한 고유 색상 팔레트 풀 (최대 50개 종목 고유색 지원)
             distinct_colors = (
                 px.colors.qualitative.Plotly + 
                 px.colors.qualitative.Alphabet + 
@@ -764,8 +760,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             for idx, ticker in enumerate(target_tickers):
                 sub_df = df_top_hist[df_top_hist['name'] == ticker]
                 if not sub_df.empty:
-                    # 종목 수가 10개 이하일 때는 포인트 위에 라벨 표기, 10개 초과 시에는 호버 툴팁으로 깔끔하게 정돈
-                    if len(target_tickers) <= 10:
+                    if len(target_tickers) <= 8:
                         fig_trend.add_trace(go.Scatter(
                             x=sub_df['report_date_str'],
                             y=sub_df['weight'],
@@ -789,13 +784,19 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                             cliponaxis=False
                         ))
 
-            # 상단 짤림 방지: Y축 상단 마진을 최대값의 1.22배로 확장 & layout margin(t=80) 확보
-            y_upper_limit = max(max_y_val * 1.22, 5.0)
+            # Y축 상단 마진 자동 확장
+            y_upper_limit = max(max_y_val * 1.18, 5.0)
+            # 종목 수에 맞춰 차트 높이 자동 확장
+            dynamic_trend_height = max(550, int(420 + len(target_tickers) * 12))
             
             fig_trend.update_layout(
+                height=dynamic_trend_height,
                 title=dict(
                     text=f"{selected_inst_name} 상위 {len(target_tickers)}개 종목 분기별(QoQ) 비중 추이 (최근 {selected_q_count}분기)",
-                    font=dict(size=15)
+                    font=dict(size=15),
+                    y=0.98,
+                    x=0.01,
+                    xanchor='left'
                 ),
                 xaxis_title="공시 기준일 (분기)",
                 yaxis=dict(
@@ -804,19 +805,19 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                     automargin=True
                 ),
                 hovermode="x unified",
-                margin=dict(l=20, r=20, t=80, b=40),
+                margin=dict(l=20, r=200, t=50, b=40),  # 우측 범례 공간 확보
                 legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.04,
-                    xanchor="center",
-                    x=0.5,
+                    orientation="v",
+                    yanchor="top",
+                    y=1.0,
+                    xanchor="left",
+                    x=1.02,
                     font=dict(size=10.5)
                 )
             )
             st.plotly_chart(fig_trend, use_container_width=True)
 
-        # TAB 3: 직전 분기 대비(QoQ) 매수/매도 변동 내역
+        # TAB 3: 직전 분기 대비 매수/매도 변동 (변동 항목 수에 따라 자동 높이 확장)
         with tab_v3:
             if len(all_history_results) >= 2:
                 prev_df, prev_meta = all_history_results[1]
@@ -854,6 +855,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 qoq_bar_df = pd.concat([top_decreased, top_increased])
                 
                 if not qoq_bar_df.empty:
+                    dynamic_qoq_height = max(380, len(qoq_bar_df) * 34 + 90)
                     fig_qoq = go.Figure(go.Bar(
                         x=qoq_bar_df['weight_diff'],
                         y=qoq_bar_df['name'],
@@ -865,6 +867,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                         textposition='outside'
                     ))
                     fig_qoq.update_layout(
+                        height=dynamic_qoq_height,
                         title="직전 분기 대비 비중 변동 상위 종목 (%p)",
                         xaxis_title="비중 증감폭 (%p)",
                         yaxis_title="",
@@ -883,10 +886,12 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             else:
                 st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
 
-        # TAB 4: 상위 종목 비중 바차트
+        # TAB 4: 상위 종목 비중 순위 (선택한 개수만큼 바 차트 높이 자동 확장)
         with tab_v4:
-            bar_n = st.selectbox("바 차트 표시 종목 수", [10, 20, 30], index=0)
+            bar_n = st.selectbox("바 차트 표시 종목 수", [10, 20, 30, 40, 50], index=0)
             df_bar_top = latest_df.head(bar_n).sort_values(by='weight', ascending=True)
+            
+            dynamic_bar_height = max(380, bar_n * 26 + 100)
             fig_bar = go.Figure(go.Bar(
                 x=df_bar_top['weight'],
                 y=df_bar_top['name'],
@@ -896,6 +901,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 textposition='outside'
             ))
             fig_bar.update_layout(
+                height=dynamic_bar_height,
                 title=f"{selected_inst_name} 상위 Top {bar_n} 보유 비중",
                 xaxis_title="포트폴리오 비중 (%)",
                 yaxis_title="",
