@@ -676,14 +676,14 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 df_tree['value_m'].apply(lambda x: f"${x:,.1f}M")
             )
             
-            # 다크 모드 가독성이 탁월한 Blues 팔레트 적용
+            # 다크 모드 가독성이 탁월한 Burg 팔레트 적용
             fig_tree = px.treemap(
                 df_tree,
                 path=['name'],
                 values='value',
                 title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top {tree_n}, {meta['report_date']} 기준)",
                 color='weight',
-                color_continuous_scale='Blues'
+                color_continuous_scale='Burg'
             )
             
             fig_tree.update_traces(
