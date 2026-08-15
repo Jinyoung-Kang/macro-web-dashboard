@@ -231,7 +231,7 @@ def render_sec_view():
         else:
             st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
 
-    # TAB 4: 상위 종목 비중 순위 (기준 날짜(분기) & 종목 수 선택 가능)
+    # TAB 4: 상위 종목 비중 순위 (기준 공시일(분기) & 종목 수 선택 가능)
     with tab_v4:
         st.markdown("#### ⚙️ 상위 종목 비중 순위 조회 조건 설정")
         col_b1, col_b2 = st.columns([1, 1])
