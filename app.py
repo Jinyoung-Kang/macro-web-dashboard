@@ -943,7 +943,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             "total_count": len(latest_df),
             "top10_weight": latest_df.head(10)['weight'].sum()
         }
-"""
+
         # 원/달러 전일 종가 조회하여 원화 AUM 계산
         usdkrw_hist = fetch_ticker_data_local("KRW=X", period="5d")
         usdkrw_prev = 1416.85
@@ -951,7 +951,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             usdkrw_prev = float(usdkrw_hist['Close'].iloc[-2])
         elif usdkrw_hist is not None and len(usdkrw_hist) == 1:
             usdkrw_prev = float(usdkrw_hist['Close'].iloc[-1])
-"""
+
         total_aum_krw = meta['total_aum'] * usdkrw_prev
         if total_aum_krw >= 1e12:
             aum_krw_str = f"약 {total_aum_krw/1e12:,.1f}조 원"
@@ -965,7 +965,8 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             f"${meta['total_aum']/1e9:,.2f} B", 
             delta=f"KRW {aum_krw_str}",
             delta_color="off",
-            help=f"13F 공시 대상 미국 주식 총 평가액\n원/달러 전일 공식 종가({usdkrw_prev:,.2f}원/$) 기준 환산: {aum_krw_str}"
+            #help=f"13F 공시 대상 미국 주식 총 평가액\n원/달러 전일 공식 종가({usdkrw_prev:,.2f}원/$) 기준 환산: {aum_krw_str}"
+            help=f"기준 환산: {aum_krw_str}"
         )
         m1.caption(f"💵 원화 환산: **{aum_krw_str}** (전일 종가 {usdkrw_prev:,.1f}원/$)")
         
