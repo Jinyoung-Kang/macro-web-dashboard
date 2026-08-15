@@ -2,6 +2,8 @@ import streamlit as st
 import yfinance as yf
 import plotly.graph_objects as go
 import pandas as pd
+import requests
+import io
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
@@ -91,20 +93,29 @@ now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 def fetch_ticker_data(symbol, period="5d"):
     try:
         t = yf.Ticker(symbol)
-        return t.history(period=period)
+        df = t.history(period=period)
+        if df is not None and not df.empty:
+            return df.dropna(subset=['Close'])
+        return None
     except Exception:
         return None
 
-# FRED 하이일드 스프레드(BAMLH0A0HYM2) 수집 (일별 갱신)
+# FRED 하이일드 스프레드 (User-Agent 헤더 추가로 403 차단 방지)
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_fred_hy_spread():
     try:
         url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2"
-        df = pd.read_csv(url)
-        df['DATE'] = pd.to_datetime(df['DATE'])
-        df['BAMLH0A0HYM2'] = pd.to_numeric(df['BAMLH0A0HYM2'], errors='coerce')
-        df = df.dropna().set_index('DATE')
-        return df
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            df = pd.read_csv(io.StringIO(resp.text))
+            df['DATE'] = pd.to_datetime(df['DATE'])
+            df['BAMLH0A0HYM2'] = pd.to_numeric(df['BAMLH0A0HYM2'], errors='coerce')
+            df = df.dropna().set_index('DATE')
+            return df
+        return None
     except Exception:
         return None
 
@@ -152,7 +163,6 @@ for cat_name, tickers in MACRO_CATEGORIES.items():
         else:
             collected_data[cat_name].append({"name": name, "price_str": "N/A", "prev_str": "N/A", "delta_str": "N/A", "status": "fail"})
 
-# 텍스트 리포트 문자열 생성
 lines = [
     "📌 [글로벌 매크로 지표 브리핑]",
     f"⏱ 기준 시각: {now_str}",
@@ -324,14 +334,14 @@ else:
 st.divider()
 
 # ==========================================
-# 6. 신용 리스크 및 시장 변동성 (Credit & Volatility) 전용 섹션 (신규)
+# 6. 신용 리스크 및 시장 변동성 (Credit & Volatility) 전용 섹션
 # ==========================================
 st.subheader("⚡ 신용 리스크 및 시장 변동성 (Credit & Volatility)")
 st.caption("주식·채권 시장의 가격 변동성과 기업 자금시장의 부도 위험(신용 스프레드)을 종합 모니터링합니다.")
 
-# 데이터 수집 (VIX, MOVE, HY OAS)
-vix_hist = fetch_ticker_data("^VIX", period="5d")
-move_hist = fetch_ticker_data("^MOVE", period="5d")
+# 1mo 기간으로 넉넉하게 조회하여 결측/지연 방지
+vix_hist = fetch_ticker_data("^VIX", period="1mo")
+move_hist = fetch_ticker_data("^MOVE", period="1mo")
 hy_df = fetch_fred_hy_spread()
 
 col_v, col_m, col_h = st.columns(3)
@@ -452,26 +462,40 @@ with risk_tab1:
     v_chart = fetch_ticker_data("^VIX", period=vix_period)
     m_chart = fetch_ticker_data("^MOVE", period=vix_period)
     
-    if v_chart is not None and m_chart is not None and not v_chart.empty and not m_chart.empty:
+    if v_chart is not None and not v_chart.empty:
         fig_vol = go.Figure()
         fig_vol.add_trace(go.Scatter(
             x=v_chart.index, y=v_chart['Close'], mode='lines', name='VIX (주식 변동성)',
             line=dict(color='#FF5722', width=2)
         ))
-        fig_vol.add_trace(go.Scatter(
-            x=m_chart.index, y=m_chart['Close'], mode='lines', name='MOVE (채권 변동성)',
-            line=dict(color='#3F51B5', width=2), yaxis="y2"
-        ))
+        
+        if m_chart is not None and not m_chart.empty:
+            fig_vol.add_trace(go.Scatter(
+                x=m_chart.index, y=m_chart['Close'], mode='lines', name='MOVE (채권 변동성)',
+                line=dict(color='#3F51B5', width=2), yaxis="y2"
+            ))
+            
+        # 최신 Plotly 문법 적용 (titlefont -> title dict)
         fig_vol.update_layout(
             title=f"VIX 및 MOVE 지수 비교 추이 ({vix_period})",
             xaxis_title="일자",
-            yaxis=dict(title="VIX (pt)", titlefont=dict(color="#FF5722"), tickfont=dict(color="#FF5722")),
-            yaxis2=dict(title="MOVE (pt)", titlefont=dict(color="#3F51B5"), tickfont=dict(color="#3F51B5"), overlaying="y", side="right"),
+            yaxis=dict(
+                title=dict(text="VIX (pt)", font=dict(color="#FF5722")),
+                tickfont=dict(color="#FF5722")
+            ),
+            yaxis2=dict(
+                title=dict(text="MOVE (pt)", font=dict(color="#3F51B5")),
+                tickfont=dict(color="#3F51B5"),
+                overlaying="y",
+                side="right"
+            ),
             hovermode="x unified",
             margin=dict(l=20, r=20, t=40, b=20),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig_vol, use_container_width=True)
+    else:
+        st.warning("변동성 지수 데이터를 불러오지 못했습니다.")
 
 with risk_tab2:
     if hy_df is not None and not hy_df.empty:
@@ -485,7 +509,6 @@ with risk_tab2:
             name='US High Yield OAS (%p)', line=dict(color='#D32F2F', width=2),
             fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)'
         ))
-        # 5% 주의선, 7% 위기 기준선 추가
         fig_hy.add_hline(y=5.0, line_dash="dot", line_color="orange", annotation_text="경계선 (5.0%p)")
         fig_hy.add_hline(y=7.0, line_dash="dash", line_color="red", annotation_text="위기/침체선 (7.0%p)")
         fig_hy.update_layout(
@@ -496,6 +519,8 @@ with risk_tab2:
             margin=dict(l=20, r=20, t=40, b=20)
         )
         st.plotly_chart(fig_hy, use_container_width=True)
+    else:
+        st.warning("하이일드 스프레드 데이터를 불러오지 못했습니다.")
 
 st.divider()
 
