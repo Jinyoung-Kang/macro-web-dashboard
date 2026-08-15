@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 import plotly.graph_objects as go
 import pandas as pd
@@ -60,16 +61,11 @@ if st.sidebar.button("로그아웃", use_container_width=True):
     st.rerun()
 
 # ==========================================
-# 2. 시간대(KST / NY) 설정 및 매크로 지표 정의
+# 2. 데이터 갱신 시각(KST) 및 매크로 지표 정의
 # ==========================================
 kst_tz = ZoneInfo("Asia/Seoul")
-ny_tz = ZoneInfo("America/New_York")
-
 now_kst = datetime.now(kst_tz)
-now_ny = datetime.now(ny_tz)
-
 now_str_kst = now_kst.strftime('%Y-%m-%d %H:%M:%S')
-now_str_ny = now_ny.strftime('%Y-%m-%d %H:%M:%S')
 
 MACRO_CATEGORIES = {
     "💵 통화 및 환율 :gray[(실시간)]": {
@@ -206,16 +202,16 @@ hy_df = fetch_fred_hy_spread()
 def clean_tag(text: str) -> str:
     return text.replace(":gray[", "").replace("]", "")
 
-# 텍스트 종합 브리핑 문자열 생성 (한국/뉴욕 기준 시각 명시)
+# 텍스트 종합 브리핑 문자열 생성 (KST 갱신 시각만 기록)
 lines = [
     "📌 [글로벌 매크로 지표 종합 브리핑]",
-    f"⏱ 갱신 시각: 🇰🇷 {now_str_kst} (KST) | 🇺🇸 {now_str_ny} (EST/EDT)",
+    f"⏱ 기준 시각: {now_str_kst} (KST)",
     "※ 변동 기준: 직전 거래일 종가 대비 (+, - 수치 및 %)",
-    "=" * 60
+    "=" * 55
 ]
 for cat_name, items in collected_data.items():
     lines.append(f"\n{clean_tag(cat_name)}")
-    lines.append("-" * 50)
+    lines.append("-" * 45)
     for item in items:
         clean_item_name = clean_tag(item['name'])
         if item["status"] == "ok":
@@ -228,11 +224,11 @@ if rate_10y_curr is not None and rate_2y_curr is not None:
     prev_spread = rate_10y_prev - rate_2y_prev
     spread_delta = curr_spread - prev_spread
     lines.append("\n📊 주요 거시 스프레드 (15분 지연)")
-    lines.append("-" * 50)
+    lines.append("-" * 45)
     lines.append(f"• 10Y-2Y 장단기 금리차    : {curr_spread:>8.2f}%p (전일: {prev_spread:>8.2f}%p) | 전일비 {spread_delta:+.2f}%p")
 
 lines.append("\n⚡ 신용 및 시장 변동성 지표")
-lines.append("-" * 50)
+lines.append("-" * 45)
 if vix_hist is not None and len(vix_hist) >= 2:
     v_c, v_p = vix_hist['Close'].iloc[-1], vix_hist['Close'].iloc[-2]
     lines.append(f"• CBOE VIX [15분 지연]    : {v_c:>8.2f} pt (전일: {v_p:>8.2f}) | 전일비 {v_c-v_p:+.2f} ({((v_c-v_p)/v_p)*100:+.2f}%)")
@@ -244,21 +240,61 @@ if hy_df is not None and len(hy_df) >= 2:
     h_dt = hy_df.index[-1].strftime('%m-%d')
     lines.append(f"• 하이일드 OAS [1일지연 {h_dt}]: {h_c:>8.2f}%p (전일: {h_p:>8.2f}%p) | 전일비 {h_c-h_p:+.2f}%p")
 
-lines.append("\n" + "=" * 60)
+lines.append("\n" + "=" * 55)
 report_text = "\n".join(lines)
 
 # ==========================================
-# 3. 헤더 영역 (한국 & 뉴욕 시계 바)
+# 3. 헤더 영역 (실시간 듀얼 디지털 시계 + KST 갱신 시각)
 # ==========================================
+
+# 1초마다 자동/동적으로 동작하는 자바스크립트 실시간 시계 컴포넌트
+live_clock_html = """
+<div style="
+    display: flex; 
+    flex-wrap: wrap;
+    gap: 15px; 
+    align-items: center; 
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: rgba(255, 255, 255, 0.04); 
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px; 
+    padding: 8px 14px; 
+    color: #e0e0e0;
+    font-size: 13.5px;
+    margin-bottom: 5px;
+">
+    <div style="display: flex; align-items: center; gap: 6px;">
+        <span>🇰🇷 <b>한국 (KST)</b></span>
+        <span id="live-kst" style="font-family: monospace; font-weight: bold; color: #4da3ff; font-size: 14.5px;">--:--:--</span>
+    </div>
+    <div style="color: rgba(255, 255, 255, 0.25);">|</div>
+    <div style="display: flex; align-items: center; gap: 6px;">
+        <span>🗽 <b>뉴욕 (EST/EDT)</b></span>
+        <span id="live-ny" style="font-family: monospace; font-weight: bold; color: #ffb74d; font-size: 14.5px;">--:--:--</span>
+    </div>
+</div>
+<script>
+function updateLiveClocks() {
+    const now = new Date();
+    const optKST = { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    const optNY = { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    
+    document.getElementById('live-kst').innerText = new Intl.DateTimeFormat('ko-KR', optKST).format(now);
+    document.getElementById('live-ny').innerText = new Intl.DateTimeFormat('ko-KR', optNY).format(now);
+}
+updateLiveClocks();
+setInterval(updateLiveClocks, 1000);
+</script>
+"""
+
 header_left, header_right = st.columns([3, 1])
 
 with header_left:
     st.title("📊 Global Macro Dashboard")
-    st.markdown(
-        f"🕒 **한국 (KST):** `{now_str_kst}` &nbsp;&nbsp;|&nbsp;&nbsp; "
-        f"🗽 **뉴욕 (EST/EDT):** `{now_str_ny}` &nbsp;&nbsp;"
-        f":gray[(갱신 주기: {refresh_interval}초)]"
-    )
+    # 실시간 동적 시계 임베딩
+    components.html(live_clock_html, height=45)
+    # 데이터 최근 갱신 시각 (KST 기준만 표시)
+    st.caption(f"최근 데이터 갱신 시각: {now_str_kst} (KST) | 갱신 주기: {refresh_interval}초")
 
 with header_right:
     st.write("")
