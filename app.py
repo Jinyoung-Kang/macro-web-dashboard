@@ -100,24 +100,50 @@ def fetch_ticker_data(symbol, period="5d"):
     except Exception:
         return None
 
-# FRED 하이일드 스프레드 (User-Agent 헤더 추가로 403 차단 방지)
+# FRED 하이일드 스프레드 수집 (API Key 우선 + 다이렉트 폴백)
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_fred_hy_spread():
+    # 1. Secrets에 등록된 FRED 공식 API Key가 있는 경우 (차단 위험 0%)
+    api_key = st.secrets.get("fred", {}).get("api_key", None)
+    if api_key:
+        try:
+            url = f"https://api.stlouisfed.org/fred/series/observations?series_id=BAMLH0A0HYM2&api_key={api_key}&file_type=json"
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                data = r.json().get('observations', [])
+                if data:
+                    df = pd.DataFrame(data)[['date', 'value']]
+                    df.rename(columns={'date': 'DATE', 'value': 'BAMLH0A0HYM2'}, inplace=True)
+                    df['DATE'] = pd.to_datetime(df['DATE'])
+                    df['BAMLH0A0HYM2'] = pd.to_numeric(df['BAMLH0A0HYM2'], errors='coerce')
+                    df = df.dropna().set_index('DATE')
+                    if not df.empty:
+                        return df
+        except Exception:
+            pass
+
+    # 2. API Key 미설정 시 정밀 브라우저 헤더를 사용한 다이렉트 다운로드 시도
     try:
         url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://fred.stlouisfed.org/series/BAMLH0A0HYM2"
         }
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code == 200:
+        session = requests.Session()
+        resp = session.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200 and "BAMLH0A0HYM2" in resp.text:
             df = pd.read_csv(io.StringIO(resp.text))
             df['DATE'] = pd.to_datetime(df['DATE'])
             df['BAMLH0A0HYM2'] = pd.to_numeric(df['BAMLH0A0HYM2'], errors='coerce')
             df = df.dropna().set_index('DATE')
-            return df
-        return None
+            if not df.empty:
+                return df
     except Exception:
-        return None
+        pass
+
+    return None
 
 collected_data = {}
 rate_10y_curr, rate_10y_prev = None, None
@@ -339,7 +365,6 @@ st.divider()
 st.subheader("⚡ 신용 리스크 및 시장 변동성 (Credit & Volatility)")
 st.caption("주식·채권 시장의 가격 변동성과 기업 자금시장의 부도 위험(신용 스프레드)을 종합 모니터링합니다.")
 
-# 1mo 기간으로 넉넉하게 조회하여 결측/지연 방지
 vix_hist = fetch_ticker_data("^VIX", period="1mo")
 move_hist = fetch_ticker_data("^MOVE", period="1mo")
 hy_df = fetch_fred_hy_spread()
@@ -426,6 +451,7 @@ with col_h:
         st.markdown(f"상태: :{h_color}[**{h_status}**] (직전: `{h_prev:.2f}%p`)")
     else:
         st.metric(label="하이일드 스프레드", value="로드 실패")
+        st.caption("ℹ️ Secrets에 `[fred] api_key`를 등록하면 즉시 정상 로드됩니다.")
 
 # 신용 & 변동성 해석 모델 테이블
 st.markdown("#### 📖 신용 및 변동성 핵심 해석 기준표")
@@ -475,7 +501,6 @@ with risk_tab1:
                 line=dict(color='#3F51B5', width=2), yaxis="y2"
             ))
             
-        # 최신 Plotly 문법 적용 (titlefont -> title dict)
         fig_vol.update_layout(
             title=f"VIX 및 MOVE 지수 비교 추이 ({vix_period})",
             xaxis_title="일자",
@@ -520,7 +545,7 @@ with risk_tab2:
         )
         st.plotly_chart(fig_hy, use_container_width=True)
     else:
-        st.warning("하이일드 스프레드 데이터를 불러오지 못했습니다.")
+        st.warning("하이일드 스프레드 데이터를 불러오지 못했습니다. Streamlit Cloud Secrets에 `[fred] api_key`를 등록해주세요.")
 
 st.divider()
 
