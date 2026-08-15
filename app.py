@@ -62,33 +62,33 @@ if st.sidebar.button("로그아웃", use_container_width=True):
 # 2. 매크로 지표 정의 및 데이터 수집 함수
 # ==========================================
 MACRO_CATEGORIES = {
-    "💵 통화 및 환율 (실시간)": {
-        "달러 인덱스 (DXY) [실시간]": "DX-Y.NYB",
-        "원/달러 (USD/KRW) [실시간]": "KRW=X",
-        "달러/엔 (USD/JPY) [실시간]": "JPY=X",
-        "엔/원 100엔당 (JPY/KRW) [실시간]": "JPYKRW=X"
+    "💵 통화 및 환율 :gray[(실시간)]": {
+        "달러 인덱스 (DXY) :gray[[실시간]]": "DX-Y.NYB",
+        "원/달러 (USD/KRW) :gray[[실시간]]": "KRW=X",
+        "달러/엔 (USD/JPY) :gray[[실시간]]": "JPY=X",
+        "엔/원 100엔당 (JPY/KRW) :gray[[실시간]]": "JPYKRW=X"
     },
-    "🏛️ 미국 국채 금리 (15분 지연)": {
-        "미국채 2년물 금리(%) [15분 지연]": "2YY=F",
-        "미국채 10년물 금리(%) [15분 지연]": "^TNX",
-        "미국채 30년물 금리(%) [15분 지연]": "^TYX"
+    "🏛️ 미국 국채 금리 :gray[(15분 지연)]": {
+        "미국채 2년물 금리(%) :gray[[15분 지연]]": "2YY=F",
+        "미국채 10년물 금리(%) :gray[[15분 지연]]": "^TNX",
+        "미국채 30년물 금리(%) :gray[[15분 지연]]": "^TYX"
     },
-    "🛢️ 원자재 (15분 지연)": {
-        "WTI 원유 ($) [15분 지연]": "CL=F",
-        "브렌트유 ($) [15분 지연]": "BZ=F",
-        "금 선물 ($) [15분 지연]": "GC=F"
+    "🛢️ 원자재 :gray[(15분 지연)]": {
+        "WTI 원유 ($) :gray[[15분 지연]]": "CL=F",
+        "브렌트유 ($) :gray[[15분 지연]]": "BZ=F",
+        "금 선물 ($) :gray[[15분 지연]]": "GC=F"
     },
-    "🇺🇸 미국 주가지수 및 선물 (15분 지연)": {
-        "S&P 500 [15분 지연]": "^GSPC",
-        "S&P 500 선물 (ES) [15분 지연]": "ES=F",
-        "나스닥 100 [15분 지연]": "^NDX",
-        "나스닥 선물 (NQ) [15분 지연]": "NQ=F"
+    "🇺🇸 미국 주가지수 및 선물 :gray[(15분 지연)]": {
+        "S&P 500 :gray[[15분 지연]]": "^GSPC",
+        "S&P 500 선물 (ES) :gray[[15분 지연]]": "ES=F",
+        "나스닥 100 :gray[[15분 지연]]": "^NDX",
+        "나스닥 선물 (NQ) :gray[[15분 지연]]": "NQ=F"
     },
-    "🌏 아시아 주요 주가지수 (15분 지연)": {
-        "코스피 (KOSPI) [15분 지연]": "^KS11",
-        "닛케이 225 (Nikkei) [15분 지연]": "^N225",
-        "상하이 종합 (SSE) [15분 지연]": "000001.SS",
-        "항셍 지수 (HSI) [15분 지연]": "^HSI"
+    "🌏 아시아 주요 주가지수 :gray[(15분 지연)]": {
+        "코스피 (KOSPI) :gray[[15분 지연]]": "^KS11",
+        "닛케이 225 (Nikkei) :gray[[15분 지연]]": "^N225",
+        "상하이 종합 (SSE) :gray[[15분 지연]]": "000001.SS",
+        "항셍 지수 (HSI) :gray[[15분 지연]]": "^HSI"
     }
 }
 
@@ -195,7 +195,10 @@ vix_hist = fetch_ticker_data("^VIX", period="1mo")
 move_hist = fetch_ticker_data("^MOVE", period="1mo")
 hy_df = fetch_fred_hy_spread()
 
-# 텍스트 종합 브리핑 문자열 생성
+# 텍스트 종합 브리핑 문자열 생성 (태그 제거 후 깔끔한 텍스트로 가공)
+def clean_tag(text: str) -> str:
+    return text.replace(":gray[", "").replace("]", "")
+
 lines = [
     "📌 [글로벌 매크로 지표 종합 브리핑]",
     f"⏱ 기준 시각: {now_str}",
@@ -203,13 +206,14 @@ lines = [
     "=" * 55
 ]
 for cat_name, items in collected_data.items():
-    lines.append(f"\n{cat_name}")
+    lines.append(f"\n{clean_tag(cat_name)}")
     lines.append("-" * 45)
     for item in items:
+        clean_item_name = clean_tag(item['name'])
         if item["status"] == "ok":
-            lines.append(f"• {item['name']:<24} : {item['price_str']:>9} (전일: {item['prev_str']:>9}) | 전일비 {item['delta_str']}")
+            lines.append(f"• {clean_item_name:<24} : {item['price_str']:>9} (전일: {item['prev_str']:>9}) | 전일비 {item['delta_str']}")
         else:
-            lines.append(f"• {item['name']:<24} : {item['price_str']:>9} | {item['delta_str']}")
+            lines.append(f"• {clean_item_name:<24} : {item['price_str']:>9} | {item['delta_str']}")
 
 if rate_10y_curr is not None and rate_2y_curr is not None:
     curr_spread = rate_10y_curr - rate_2y_curr
@@ -307,7 +311,7 @@ if rate_10y_curr is not None and rate_2y_curr is not None:
     sc1, sc2 = st.columns([1, 2])
     with sc1:
         st.metric(
-            label="현재 10Y - 2Y 스프레드 [15분 지연]",
+            label="현재 10Y - 2Y 스프레드 :gray[[15분 지연]]",
             value=f"{curr_spread:+.2f} %p",
             delta=f"{spread_delta:+.2f} %p (전일비)"
         )
@@ -405,7 +409,7 @@ with col_v:
             v_status, v_color = "공포 (Panic)", "red"
             
         st.metric(
-            label="CBOE VIX (주식 변동성) [15분 지연]",
+            label="CBOE VIX (주식 변동성) :gray[[15분 지연]]",
             value=f"{v_curr:.2f}",
             delta=f"{v_delta:+.2f} ({v_pct:+.2f}%)",
             help="S&P 500 옵션 가격 기반 30일 변동성 기대치"
@@ -432,7 +436,7 @@ with col_m:
             m_status, m_color = "발작 / 위기 (Crisis)", "red"
             
         st.metric(
-            label="ICE BofA MOVE (채권 변동성) [지연/마감]",
+            label="ICE BofA MOVE (채권 변동성) :gray[[지연/마감]]",
             value=f"{m_curr:.2f}",
             delta=f"{m_delta:+.2f} ({m_pct:+.2f}%)",
             help="미국 국채 옵션 기반 금리 변동성 지수"
@@ -459,7 +463,7 @@ with col_h:
             h_status, h_color = "신용 위기 (Crisis)", "red"
             
         st.metric(
-            label=f"하이일드 스프레드 (HY OAS) [1일 지연 {h_date} EOD]",
+            label=f"하이일드 스프레드 (HY OAS) :gray[[1일 지연 {h_date} EOD]]",
             value=f"{h_curr:.2f} %p",
             delta=f"{h_delta:+.2f} %p",
             help="ICE BofA 미국 하이일드 채권 지수 옵션조정 스프레드 (FRED Daily)"
@@ -506,13 +510,13 @@ with risk_tab1:
     if v_chart is not None and not v_chart.empty:
         fig_vol = go.Figure()
         fig_vol.add_trace(go.Scatter(
-            x=v_chart.index, y=v_chart['Close'], mode='lines', name='VIX (주식 변동성) [15분 지연]',
+            x=v_chart.index, y=v_chart['Close'], mode='lines', name='VIX (주식 변동성)',
             line=dict(color='#FF5722', width=2)
         ))
         
         if m_chart is not None and not m_chart.empty:
             fig_vol.add_trace(go.Scatter(
-                x=m_chart.index, y=m_chart['Close'], mode='lines', name='MOVE (채권 변동성) [지연/마감]',
+                x=m_chart.index, y=m_chart['Close'], mode='lines', name='MOVE (채권 변동성)',
                 line=dict(color='#3F51B5', width=2), yaxis="y2"
             ))
             
@@ -546,7 +550,7 @@ with risk_tab2:
         fig_hy = go.Figure()
         fig_hy.add_trace(go.Scatter(
             x=filtered_hy.index, y=filtered_hy['BAMLH0A0HYM2'], mode='lines',
-            name='US High Yield OAS (%p) [1일 지연 EOD]', line=dict(color='#D32F2F', width=2),
+            name='US High Yield OAS (%p)', line=dict(color='#D32F2F', width=2),
             fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)'
         ))
         fig_hy.add_hline(y=5.0, line_dash="dot", line_color="orange", annotation_text="경계선 (5.0%p)")
@@ -575,7 +579,11 @@ for cat in MACRO_CATEGORIES.values():
 
 c1, c2 = st.columns([2, 1])
 with c1:
-    selected_name = st.selectbox("조회할 단일 지표 선택", list(ALL_TICKERS.keys()))
+    selected_name = st.selectbox(
+        "조회할 단일 지표 선택", 
+        list(ALL_TICKERS.keys()),
+        format_func=clean_tag
+    )
 with c2:
     period = st.selectbox("조회 기간", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3, key="single_period")
 
@@ -589,11 +597,11 @@ try:
             x=df.index, 
             y=df['Close'], 
             mode='lines', 
-            name=selected_name,
+            name=clean_tag(selected_name),
             line=dict(color='#0066FF', width=2)
         ))
         fig.update_layout(
-            title=f"{selected_name} ({selected_symbol}) 상세 차트",
+            title=f"{clean_tag(selected_name)} ({selected_symbol}) 상세 차트",
             xaxis_title="일자",
             yaxis_title="수치/가격",
             hovermode="x unified",
@@ -618,7 +626,8 @@ with col_comp1:
     multi_selected = st.multiselect(
         "비교할 지표 선택 (다중 선택 가능)",
         options=list(ALL_TICKERS.keys()),
-        default=["원/달러 (USD/KRW) [실시간]", "달러 인덱스 (DXY) [실시간]"]
+        default=["원/달러 (USD/KRW) :gray[[실시간]]", "달러 인덱스 (DXY) :gray[[실시간]]"],
+        format_func=clean_tag
     )
 
 with col_comp2:
@@ -662,7 +671,7 @@ if multi_selected:
                 x=m_df.index,
                 y=y_data,
                 mode='lines',
-                name=name,
+                name=clean_tag(name),
                 line=dict(width=2)
             ))
 
