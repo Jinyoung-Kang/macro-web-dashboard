@@ -272,33 +272,52 @@ spread_table_data = {
 }
 st.dataframe(pd.DataFrame(spread_table_data), use_container_width=True, hide_index=True)
 
-# 10Y-2Y 전용 과거 추이 차트 (0선 기준선 포함)
+# 10Y-2Y 전용 과거 추이 차트 (Timezone 표준화 및 ffill 적용)
 spread_period = st.selectbox("금리차 추이 기간 선택", ["6mo", "1y", "2y", "5y", "max"], index=2, key="spread_period_select")
 df_10y = fetch_ticker_data("^TNX", period=spread_period)
 df_2y = fetch_ticker_data("2YY=F", period=spread_period)
 
 if df_10y is not None and df_2y is not None and not df_10y.empty and not df_2y.empty:
-    merged_yield = pd.merge(df_10y[['Close']], df_2y[['Close']], left_index=True, right_index=True, suffixes=('_10Y', '_2Y')).dropna()
-    merged_yield['Spread'] = merged_yield['Close_10Y'] - merged_yield['Close_2Y']
+    s_10y = df_10y['Close'].copy()
+    s_2y = df_2y['Close'].copy()
     
-    fig_spread = go.Figure()
-    fig_spread.add_trace(go.Scatter(
-        x=merged_yield.index,
-        y=merged_yield['Spread'],
-        mode='lines',
-        name='10Y-2Y 스프레드 (%p)',
-        line=dict(color='#E02424', width=2),
-        fill='tozeroy'
-    ))
-    fig_spread.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.8, annotation_text="기준선 (0%p 역전 경계)")
-    fig_spread.update_layout(
-        title=f"미국채 10Y - 2Y 스프레드 과거 추이 ({spread_period})",
-        xaxis_title="일자",
-        yaxis_title="스프레드 (%p)",
-        hovermode="x unified",
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-    st.plotly_chart(fig_spread, use_container_width=True)
+    # 인덱스 Timezone 제거 및 자정(00:00:00) 기준 정규화
+    if s_10y.index.tz is not None:
+        s_10y.index = s_10y.index.tz_localize(None)
+    if s_2y.index.tz is not None:
+        s_2y.index = s_2y.index.tz_localize(None)
+        
+    s_10y.index = s_10y.index.normalize()
+    s_2y.index = s_2y.index.normalize()
+
+    # 결측치 보정 및 스프레드 계산
+    df_spread = pd.DataFrame({'10Y': s_10y, '2Y': s_2y}).ffill().dropna()
+    df_spread['Spread'] = df_spread['10Y'] - df_spread['2Y']
+
+    if not df_spread.empty:
+        fig_spread = go.Figure()
+        fig_spread.add_trace(go.Scatter(
+            x=df_spread.index,
+            y=df_spread['Spread'],
+            mode='lines',
+            name='10Y-2Y 스프레드 (%p)',
+            line=dict(color='#E02424', width=2),
+            fill='tozeroy',
+            fillcolor='rgba(224, 36, 36, 0.15)'
+        ))
+        fig_spread.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.8, annotation_text="기준선 (0%p 역전 경계)")
+        fig_spread.update_layout(
+            title=f"미국채 10Y - 2Y 스프레드 과거 추이 ({spread_period})",
+            xaxis_title="일자",
+            yaxis_title="스프레드 (%p)",
+            hovermode="x unified",
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig_spread, use_container_width=True)
+    else:
+        st.warning("스프레드 데이터를 병합하지 못했습니다.")
+else:
+    st.warning("차트 데이터를 불러오지 못했습니다.")
 
 st.divider()
 
