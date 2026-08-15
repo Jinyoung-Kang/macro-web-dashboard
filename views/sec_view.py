@@ -67,25 +67,73 @@ def render_sec_view():
         "📊 상위 종목 비중 순위"
     ])
 
-    # TAB 1: 트리맵
+    # TAB 1: 트리맵 (기준 날짜(분기) & 종목 수 선택 가능)
     with tab_v1:
-        tree_options = [10, 20, 30, 40, 50, 70, 100]
-        valid_tree_options = [n for n in tree_options if n <= len(latest_df)] or [min(10, len(latest_df))]
-        tree_n = st.selectbox("트리맵 표시 종목 수 선택", options=valid_tree_options, index=min(3, len(valid_tree_options)-1), format_func=lambda x: f"상위 Top {x}개 종목")
-
-        df_tree = latest_df.head(tree_n).copy()
-        df_tree['value_m'] = df_tree['value'] / 1e6
-        df_tree['display_label'] = "<b>" + df_tree['name'] + "</b><br>" + df_tree['weight'].apply(lambda x: f"{x:.2f}%") + "<br>" + df_tree['value_m'].apply(lambda x: f"${x:,.1f}M")
-
-        fig_tree = px.treemap(df_tree, path=['name'], values='value', title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top {tree_n}, {meta['report_date']} 기준)", color='weight', color_continuous_scale='Burg')
-        fig_tree.update_traces(
-            text=df_tree['display_label'], textinfo="text", textposition="middle center",
-            insidetextfont=dict(size=14, color="#161617", family="Arial, sans-serif"),
-            marker=dict(line=dict(color="#0F172A", width=1.5)),
-            hovertemplate="<b>%{label}</b><br>평가액: $%{value:,.0f}<br>포트폴리오 비중: %{color:.2f}%<extra></extra>"
-        )
-        fig_tree.update_layout(height=max(480, int(360 + tree_n * 5.5)), margin=dict(l=10, r=10, t=40, b=10), coloraxis_colorbar=dict(title="비중 (%)"))
-        st.plotly_chart(fig_tree, use_container_width=True)
+        st.markdown("#### ⚙️ 트리맵 조회 조건 설정")
+        col_t1, col_t2 = st.columns([1, 1])
+        
+        with col_t1:
+            available_dates = [q_meta['report_date'] for _, q_meta in all_history_results]
+            selected_report_date = st.selectbox(
+                "기준 공시일(분기) 선택",
+                options=available_dates,
+                index=0,
+                key="treemap_date_select"
+            )
+            
+        selected_tree_df = None
+        for df_q, q_meta in all_history_results:
+            if q_meta['report_date'] == selected_report_date:
+                selected_tree_df = df_q.sort_values(by='value', ascending=False).reset_index(drop=True)
+                break
+                
+        if selected_tree_df is not None:
+            with col_t2:
+                tree_options = [10, 20, 30, 40, 50, 70, 100]
+                valid_tree_options = [n for n in tree_options if n <= len(selected_tree_df)] or [min(10, len(selected_tree_df))]
+                
+                tree_n = st.selectbox(
+                    "트리맵 표시 종목 수 선택",
+                    options=valid_tree_options,
+                    index=min(3, len(valid_tree_options)-1),
+                    format_func=lambda x: f"상위 Top {x}개 종목",
+                    key="treemap_n_select"
+                )
+                
+            df_tree = selected_tree_df.head(tree_n).copy()
+            df_tree['value_m'] = df_tree['value'] / 1e6
+            
+            df_tree['display_label'] = (
+                "<b>" + df_tree['name'] + "</b><br>" + 
+                df_tree['weight'].apply(lambda x: f"{x:.2f}%") + "<br>" + 
+                df_tree['value_m'].apply(lambda x: f"${x:,.1f}M")
+            )
+            
+            fig_tree = px.treemap(
+                df_tree,
+                path=['name'],
+                values='value',
+                title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top {tree_n}, 기준일: {selected_report_date})",
+                color='weight',
+                color_continuous_scale='Burg'
+            )
+            
+            fig_tree.update_traces(
+                text=df_tree['display_label'],
+                textinfo="text",
+                textposition="middle center",
+                insidetextfont=dict(size=14, color="#161617", family="Arial, sans-serif"),
+                marker=dict(line=dict(color="#0F172A", width=1.5)),
+                hovertemplate="<b>%{label}</b><br>평가액: $%{value:,.0f}<br>포트폴리오 비중: %{color:.2f}%<extra></extra>"
+            )
+            
+            dynamic_tree_height = max(480, int(360 + tree_n * 5.5))
+            fig_tree.update_layout(
+                height=dynamic_tree_height,
+                margin=dict(l=10, r=10, t=40, b=10),
+                coloraxis_colorbar=dict(title="비중 (%)")
+            )
+            st.plotly_chart(fig_tree, use_container_width=True)
 
     # TAB 2: 기간별 비중 추이
     with tab_v2:
