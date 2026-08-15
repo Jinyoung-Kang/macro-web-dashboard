@@ -450,7 +450,7 @@ if menu_selection == "📊 거시경제 매크로 지표":
             st.metric("하이일드 스프레드", "로드 실패")
 
 # ==============================================================================
-# MENU 2: 기관 13F 포트폴리오 분석 (트리맵 선택 방식 개선 & 소수점 2자리 반올림 완비)
+# MENU 2: 기관 13F 포트폴리오 분석 (원문 영어 종목명 + AUM 원화 표기 완비)
 # ==============================================================================
 elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     
@@ -476,6 +476,17 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     
     inst_info = INSTITUTIONS[selected_inst_name]
     st.info(f"💡 **기관 소개:** {inst_info['desc']} (SEC CIK: `{inst_info['cik']}`)", icon="ℹ️")
+
+    @st.cache_data(ttl=30, show_spinner=False)
+    def fetch_ticker_data_local(symbol, period="5d"):
+        try:
+            t = yf.Ticker(symbol)
+            df = t.history(period=period)
+            if df is not None and not df.empty:
+                return df.dropna(subset=['Close'])
+            return None
+        except Exception:
+            return None
 
     @st.cache_data(ttl=86400, show_spinner=False)
     def parse_single_13f(cik: str, acc_clean: str, accession_number: str, report_date: str, user_agent: str):
@@ -635,9 +646,31 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             "top10_weight": latest_df.head(10)['weight'].sum()
         }
 
-        # 1. 메인 요약 메트릭 카드
+        # 원/달러 전일 종가 조회하여 원화 AUM 계산
+        usdkrw_hist = fetch_ticker_data_local("KRW=X", period="5d")
+        usdkrw_prev = 1416.85
+        if usdkrw_hist is not None and len(usdkrw_hist) >= 2:
+            usdkrw_prev = float(usdkrw_hist['Close'].iloc[-2])
+        elif usdkrw_hist is not None and len(usdkrw_hist) == 1:
+            usdkrw_prev = float(usdkrw_hist['Close'].iloc[-1])
+
+        total_aum_krw = meta['total_aum'] * usdkrw_prev
+        if total_aum_krw >= 1e12:
+            aum_krw_str = f"약 {total_aum_krw/1e12:,.1f}조 원"
+        else:
+            aum_krw_str = f"약 {total_aum_krw/1e8:,.0f}억 원"
+
+        # 1. 메인 요약 메트릭 카드 (원화 환산 병기)
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("총 운용자산 (AUM)", f"${meta['total_aum']/1e9:,.2f} B", help="13F 공시 대상 미국 주식 총 평가액")
+        m1.metric(
+            "총 운용자산 (AUM)", 
+            f"${meta['total_aum']/1e9:,.2f} B", 
+            delta=f"KRW {aum_krw_str}",
+            delta_color="off",
+            help=f"13F 공시 대상 미국 주식 총 평가액\n원/달러 전일 공식 종가({usdkrw_prev:,.2f}원/$) 기준 환산: {aum_krw_str}"
+        )
+        m1.caption(f"💵 원화 환산: **{aum_krw_str}** (전일 종가 {usdkrw_prev:,.1f}원/$)")
+        
         m2.metric("보유 종목 수", f"{meta['total_count']:,} 개")
         m3.metric("Top 10 집중도", f"{meta['top10_weight']:.1f} %", help="상위 10개 종목이 전체 포트폴리오에서 차지하는 비중")
         m4.metric("최신 보고서 기준일 (QoQ)", meta['report_date'], help=f"공시 제출일: {meta['filing_date']}")
@@ -653,7 +686,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             "📊 상위 종목 비중 순위"
         ])
         
-        # TAB 1: 트리맵 (드롭다운 선택 방식 + 고대비 오션 블루 팔레트)
+        # TAB 1: 트리맵 (드롭다운 선택 & 영어 원문 종목명)
         with tab_v1:
             tree_options = [10, 20, 30, 40, 50, 70, 100]
             valid_tree_options = [n for n in tree_options if n <= len(latest_df)]
@@ -676,21 +709,20 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 df_tree['value_m'].apply(lambda x: f"${x:,.1f}M")
             )
             
-            # 다크 모드 가독성이 탁월한 Burg 팔레트 적용
             fig_tree = px.treemap(
                 df_tree,
                 path=['name'],
                 values='value',
                 title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top {tree_n}, {meta['report_date']} 기준)",
                 color='weight',
-                color_continuous_scale='Burg'
+                color_continuous_scale='Blues'
             )
             
             fig_tree.update_traces(
                 text=df_tree['display_label'],
                 textinfo="text",
                 textposition="middle center",
-                insidetextfont=dict(size=14, color="#161617", family="Arial, sans-serif"),
+                insidetextfont=dict(size=14, color="#FFFFFF", family="Arial, sans-serif"),
                 marker=dict(line=dict(color="#0F172A", width=1.5)),
                 hovertemplate="<b>%{label}</b><br>평가액: $%{value:,.0f}<br>포트폴리오 비중: %{color:.2f}%<extra></extra>"
             )
@@ -703,7 +735,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             )
             st.plotly_chart(fig_tree, use_container_width=True)
 
-        # TAB 2: 기간별 비중 추이 (소수점 2자리 반올림 표기 & 범례 우측 분리)
+        # TAB 2: 기간별 비중 추이 (소수점 2자리 반올림 및 범례 우측 분리)
         with tab_v2:
             st.markdown("#### ⚙️ 기간별 비중 추이 조건 설정")
             col_ctl1, col_ctl2 = st.columns([1, 1])
@@ -770,8 +802,8 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             
             for idx, ticker in enumerate(target_tickers):
                 sub_df = df_top_hist[df_top_hist['name'] == ticker]
+                
                 if not sub_df.empty:
-                    # 소수점 3자리에서 반올림하여 2자리로 표기 (f"{x:.2f}%")
                     if len(target_tickers) <= 8:
                         fig_trend.add_trace(go.Scatter(
                             x=sub_df['report_date_str'],
@@ -817,7 +849,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                     automargin=True
                 ),
                 hovermode="x unified",
-                margin=dict(l=20, r=200, t=50, b=40),
+                margin=dict(l=20, r=220, t=50, b=40),
                 legend=dict(
                     orientation="v",
                     yanchor="top",
@@ -829,7 +861,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             )
             st.plotly_chart(fig_trend, use_container_width=True)
 
-        # TAB 3: 직전 분기 대비 매수/매도 변동 내역
+        # TAB 3: 직전 분기 대비 매수/매도 변동 내역 (영어 원문 종목명)
         with tab_v3:
             if len(all_history_results) >= 2:
                 prev_df, prev_meta = all_history_results[1]
@@ -876,7 +908,8 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                             color=['#EF4444' if x < 0 else '#10B981' for x in qoq_bar_df['weight_diff']]
                         ),
                         text=qoq_bar_df['weight_diff'].apply(lambda x: f"{x:+.2f}%p"),
-                        textposition='outside'
+                        textposition='outside',
+                        hovertemplate="<b>%{y}</b><br>비중 증감: %{x:+.2f}%p<extra></extra>"
                     ))
                     fig_qoq.update_layout(
                         height=dynamic_qoq_height,
@@ -889,7 +922,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 
                 qoq_display = merged_qoq[merged_qoq['action'] != "⚪ 유지 (Unchanged)"].sort_values(by='weight_diff', key=abs, ascending=False).head(30)
                 qoq_table = qoq_display[['name', 'action', 'weight_curr', 'weight_diff', 'value_curr', 'shares_diff']].copy()
-                qoq_table.columns = ['종목명', '투자 활동', '현재 비중', '비중 증감(%p)', '현재 평가액($)', '주식수 증감']
+                qoq_table.columns = ['종목명 (Issuer)', '투자 활동', '현재 비중', '비중 증감(%p)', '현재 평가액($)', '주식수 증감']
                 qoq_table['현재 비중'] = qoq_table['현재 비중'].map('{:.2f}%'.format)
                 qoq_table['비중 증감(%p)'] = qoq_table['비중 증감(%p)'].map('{:+.2f}%p'.format)
                 qoq_table['현재 평가액($)'] = qoq_table['현재 평가액($)'].map('${:,.0f}'.format)
@@ -898,10 +931,10 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             else:
                 st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
 
-        # TAB 4: 상위 종목 비중 순위
+        # TAB 4: 상위 종목 비중 순위 (영어 원문 종목명)
         with tab_v4:
             bar_n = st.selectbox("바 차트 표시 종목 수", [10, 20, 30, 40, 50], index=0)
-            df_bar_top = latest_df.head(bar_n).sort_values(by='weight', ascending=True)
+            df_bar_top = latest_df.head(bar_n).sort_values(by='weight', ascending=True).copy()
             
             dynamic_bar_height = max(380, bar_n * 26 + 100)
             fig_bar = go.Figure(go.Bar(
@@ -910,7 +943,8 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 orientation='h',
                 marker=dict(color='#0066FF', opacity=0.85),
                 text=df_bar_top['weight'].apply(lambda x: f"{x:.2f}%"),
-                textposition='outside'
+                textposition='outside',
+                hovertemplate="<b>%{y}</b><br>포트폴리오 비중: %{x:.2f}%<extra></extra>"
             ))
             fig_bar.update_layout(
                 height=dynamic_bar_height,
@@ -923,7 +957,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 
         st.divider()
 
-        # 3. 전체 보유 종목 상세 표
+        # 3. 전체 보유 종목 상세 표 (영어 원문 종목명)
         st.subheader("📋 전체 보유 지분 상세 목록")
         df_display = latest_df[['name', 'weight', 'value', 'shares', 'class', 'cusip']].copy()
         df_display.columns = ['종목명 (Issuer)', '비중 (%)', '평가액 ($)', '보유 주식수', '주식 종류', 'CUSIP']
