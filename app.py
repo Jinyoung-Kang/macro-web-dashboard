@@ -12,14 +12,12 @@ st.set_page_config(page_title="Global Macro Web Dashboard", layout="wide")
 # ==========================================
 def check_password():
     """올바른 비밀번호가 입력되었는지 검증하고 세션 상태를 유지합니다."""
-    # Secrets에 설정된 비밀번호 가져오기 (없을 경우 기본 비밀번호 대체)
     correct_password = st.secrets.get("auth", {}).get("password", "admin1234@")
 
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
 
     if not st.session_state.authenticated:
-        # 로그인 UI
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.markdown("### 🔒 Global Macro Dashboard")
@@ -35,7 +33,6 @@ def check_password():
         return False
     return True
 
-# 인증 실패 시 아래 메인 코드 실행 중단
 if not check_password():
     st.stop()
 
@@ -60,7 +57,7 @@ if st.sidebar.button("로그아웃", use_container_width=True):
     st.rerun()
 
 # ==========================================
-# 2. 매크로 지표 정의 및 데이터 수집
+# 2. 매크로 지표 정의 및 데이터 수집 함수
 # ==========================================
 MACRO_CATEGORIES = {
     "💵 통화 및 환율": {
@@ -98,6 +95,19 @@ def fetch_ticker_data(symbol, period="5d"):
     except Exception:
         return None
 
+# FRED 하이일드 스프레드(BAMLH0A0HYM2) 수집 (일별 갱신)
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_fred_hy_spread():
+    try:
+        url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2"
+        df = pd.read_csv(url)
+        df['DATE'] = pd.to_datetime(df['DATE'])
+        df['BAMLH0A0HYM2'] = pd.to_numeric(df['BAMLH0A0HYM2'], errors='coerce')
+        df = df.dropna().set_index('DATE')
+        return df
+    except Exception:
+        return None
+
 collected_data = {}
 rate_10y_curr, rate_10y_prev = None, None
 rate_2y_curr, rate_2y_prev = None, None
@@ -113,7 +123,6 @@ for cat_name, tickers in MACRO_CATEGORIES.items():
             delta = curr_price - prev_price
             pct_change = (delta / prev_price) * 100
             
-            # 10Y 및 2Y 금리 값 추출 (스프레드 계산용)
             if ticker_symbol == "^TNX":
                 rate_10y_curr, rate_10y_prev = curr_price, prev_price
             elif ticker_symbol == "2YY=F":
@@ -159,7 +168,6 @@ for cat_name, items in collected_data.items():
         else:
             lines.append(f"• {item['name']:<20} : {item['price_str']:>9} | {item['delta_str']}")
 
-# 10Y-2Y 장단기 금리차 텍스트 추가
 if rate_10y_curr is not None and rate_2y_curr is not None:
     curr_spread = rate_10y_curr - rate_2y_curr
     prev_spread = rate_10y_prev - rate_2y_prev
@@ -220,11 +228,8 @@ st.divider()
 # ==========================================
 st.subheader("📊 10Y-2Y 장단기 금리차의 핵심 해석 모델")
 st.markdown("미국채 10년물(장기 금리)에서 2년물(단기 금리)을 뺀 값은 채권 시장에서 가장 주목하는 **경기 선행 지표**입니다.")
-
-# 수식 박스
 st.code("스프레드(Spread) = 장기 금리(미래 경기 전망) - 단기 금리(현재 통화 정책)", language="text")
 
-# 실시간 스프레드 진단 카드
 if rate_10y_curr is not None and rate_2y_curr is not None:
     curr_spread = rate_10y_curr - rate_2y_curr
     prev_spread = rate_10y_prev - rate_2y_prev
@@ -255,7 +260,6 @@ if rate_10y_curr is not None and rate_2y_curr is not None:
         st.markdown(f"**현재 시장 진단:** :{status_color}[{status_title}]")
         st.write(status_desc)
 
-# 핵심 해석 모델 표 렌더링
 spread_table_data = {
     "시장 상태": ["정상 (Normal)", "평탄화 (Flattening)", "역전 (Inversion) ⚠️"],
     "스프레드 수치": ["양수 (+)", "0에 수렴", "음수 (-)"],
@@ -272,7 +276,7 @@ spread_table_data = {
 }
 st.dataframe(pd.DataFrame(spread_table_data), use_container_width=True, hide_index=True)
 
-# 10Y-2Y 전용 과거 추이 차트 (Timezone 표준화 및 ffill 적용)
+# 10Y-2Y 과거 추이 차트
 spread_period = st.selectbox("금리차 추이 기간 선택", ["6mo", "1y", "2y", "5y", "max"], index=2, key="spread_period_select")
 df_10y = fetch_ticker_data("^TNX", period=spread_period)
 df_2y = fetch_ticker_data("2YY=F", period=spread_period)
@@ -281,7 +285,6 @@ if df_10y is not None and df_2y is not None and not df_10y.empty and not df_2y.e
     s_10y = df_10y['Close'].copy()
     s_2y = df_2y['Close'].copy()
     
-    # 인덱스 Timezone 제거 및 자정(00:00:00) 기준 정규화
     if s_10y.index.tz is not None:
         s_10y.index = s_10y.index.tz_localize(None)
     if s_2y.index.tz is not None:
@@ -290,7 +293,6 @@ if df_10y is not None and df_2y is not None and not df_10y.empty and not df_2y.e
     s_10y.index = s_10y.index.normalize()
     s_2y.index = s_2y.index.normalize()
 
-    # 결측치 보정 및 스프레드 계산
     df_spread = pd.DataFrame({'10Y': s_10y, '2Y': s_2y}).ffill().dropna()
     df_spread['Spread'] = df_spread['10Y'] - df_spread['2Y']
 
@@ -322,7 +324,183 @@ else:
 st.divider()
 
 # ==========================================
-# 6. 개별 지표 상세 차트
+# 6. 신용 리스크 및 시장 변동성 (Credit & Volatility) 전용 섹션 (신규)
+# ==========================================
+st.subheader("⚡ 신용 리스크 및 시장 변동성 (Credit & Volatility)")
+st.caption("주식·채권 시장의 가격 변동성과 기업 자금시장의 부도 위험(신용 스프레드)을 종합 모니터링합니다.")
+
+# 데이터 수집 (VIX, MOVE, HY OAS)
+vix_hist = fetch_ticker_data("^VIX", period="5d")
+move_hist = fetch_ticker_data("^MOVE", period="5d")
+hy_df = fetch_fred_hy_spread()
+
+col_v, col_m, col_h = st.columns(3)
+
+# 1) VIX 카드
+with col_v:
+    if vix_hist is not None and len(vix_hist) >= 2:
+        v_curr = vix_hist['Close'].iloc[-1]
+        v_prev = vix_hist['Close'].iloc[-2]
+        v_delta = v_curr - v_prev
+        v_pct = (v_delta / v_prev) * 100
+        
+        if v_curr < 15:
+            v_status, v_color = "안도 (Complacency)", "green"
+        elif v_curr <= 20:
+            v_status, v_color = "정상 (Normal)", "blue"
+        elif v_curr <= 30:
+            v_status, v_color = "경계 (Caution)", "orange"
+        else:
+            v_status, v_color = "공포 (Panic)", "red"
+            
+        st.metric(
+            label="CBOE VIX (주식 변동성)",
+            value=f"{v_curr:.2f}",
+            delta=f"{v_delta:+.2f} ({v_pct:+.2f}%)",
+            help="S&P 500 옵션 가격 기반 30일 변동성 기대치"
+        )
+        st.markdown(f"상태: :{v_color}[**{v_status}**] (전일: `{v_prev:.2f}`)")
+    else:
+        st.metric(label="CBOE VIX", value="로드 실패")
+
+# 2) MOVE 카드
+with col_m:
+    if move_hist is not None and len(move_hist) >= 2:
+        m_curr = move_hist['Close'].iloc[-1]
+        m_prev = move_hist['Close'].iloc[-2]
+        m_delta = m_curr - m_prev
+        m_pct = (m_delta / m_prev) * 100
+        
+        if m_curr < 80:
+            m_status, m_color = "안정 (Stable)", "green"
+        elif m_curr <= 120:
+            m_status, m_color = "정상 (Normal)", "blue"
+        elif m_curr <= 140:
+            m_status, m_color = "경계 (Caution)", "orange"
+        else:
+            m_status, m_color = "발작 / 위기 (Crisis)", "red"
+            
+        st.metric(
+            label="ICE BofA MOVE (채권 변동성)",
+            value=f"{m_curr:.2f}",
+            delta=f"{m_delta:+.2f} ({m_pct:+.2f}%)",
+            help="미국 국채 옵션 기반 금리 변동성 지수"
+        )
+        st.markdown(f"상태: :{m_color}[**{m_status}**] (전일: `{m_prev:.2f}`)")
+    else:
+        st.metric(label="ICE BofA MOVE", value="로드 실패")
+
+# 3) 하이일드 스프레드 카드
+with col_h:
+    if hy_df is not None and len(hy_df) >= 2:
+        h_curr = hy_df['BAMLH0A0HYM2'].iloc[-1]
+        h_prev = hy_df['BAMLH0A0HYM2'].iloc[-2]
+        h_date = hy_df.index[-1].strftime('%m-%d')
+        h_delta = h_curr - h_prev
+        
+        if h_curr < 3.5:
+            h_status, h_color = "완화 (Low Risk)", "green"
+        elif h_curr <= 5.0:
+            h_status, h_color = "정상 (Normal)", "blue"
+        elif h_curr <= 7.0:
+            h_status, h_color = "경계 (Stress)", "orange"
+        else:
+            h_status, h_color = "신용 위기 (Crisis)", "red"
+            
+        st.metric(
+            label=f"하이일드 스프레드 (HY OAS, {h_date} EOD)",
+            value=f"{h_curr:.2f} %p",
+            delta=f"{h_delta:+.2f} %p",
+            help="ICE BofA 미국 하이일드 채권 지수 옵션조정 스프레드 (FRED Daily)"
+        )
+        st.markdown(f"상태: :{h_color}[**{h_status}**] (직전: `{h_prev:.2f}%p`)")
+    else:
+        st.metric(label="하이일드 스프레드", value="로드 실패")
+
+# 신용 & 변동성 해석 모델 테이블
+st.markdown("#### 📖 신용 및 변동성 핵심 해석 기준표")
+risk_model_table = {
+    "지표명": [
+        "CBOE VIX (주식 변동성)", 
+        "ICE BofA MOVE (채권 변동성)", 
+        "하이일드 스프레드 (HY OAS)"
+    ],
+    "정상 / 안정 범위": [
+        "15 ~ 20 (15 미만: 과도한 낙관)", 
+        "80 ~ 120 (80 미만: 금리 초안정)", 
+        "3.5% ~ 5.0% (3.5% 미만: 유동성 풍부)"
+    ],
+    "위험 / 발작 임계치": [
+        "30 이상 (패닉 / 급락 / 투매)", 
+        "140 이상 (채권 발작 / 긴축 충격)", 
+        "7.0% 이상 (본격 신용경색 / 경기침체)"
+    ],
+    "지표의 성격 및 핵심 해석": [
+        "주식 시장의 단기 공포 측정기. 급등 시 주가 급락 및 투매 발생 신호.",
+        "채권 시장의 공포 지수. 연준 통화정책 불확실성과 유동성 경색에 민감하게 반응.",
+        "한계 기업의 부도 리스크 프리미엄. 경기 침체 진입 시 가장 먼저 급등하는 신용 선행 지표."
+    ]
+}
+st.dataframe(pd.DataFrame(risk_model_table), use_container_width=True, hide_index=True)
+
+# 변동성 & 신용 추이 차트 탭
+st.markdown("#### 📈 위험 지표 상세 과거 추이")
+risk_tab1, risk_tab2 = st.tabs(["📊 VIX & MOVE 변동성 지수 추이", "📉 하이일드 채권 스프레드 추이"])
+
+with risk_tab1:
+    vix_period = st.selectbox("변동성 지수 기간 선택", ["6mo", "1y", "2y", "5y", "max"], index=1, key="vix_period_sel")
+    v_chart = fetch_ticker_data("^VIX", period=vix_period)
+    m_chart = fetch_ticker_data("^MOVE", period=vix_period)
+    
+    if v_chart is not None and m_chart is not None and not v_chart.empty and not m_chart.empty:
+        fig_vol = go.Figure()
+        fig_vol.add_trace(go.Scatter(
+            x=v_chart.index, y=v_chart['Close'], mode='lines', name='VIX (주식 변동성)',
+            line=dict(color='#FF5722', width=2)
+        ))
+        fig_vol.add_trace(go.Scatter(
+            x=m_chart.index, y=m_chart['Close'], mode='lines', name='MOVE (채권 변동성)',
+            line=dict(color='#3F51B5', width=2), yaxis="y2"
+        ))
+        fig_vol.update_layout(
+            title=f"VIX 및 MOVE 지수 비교 추이 ({vix_period})",
+            xaxis_title="일자",
+            yaxis=dict(title="VIX (pt)", titlefont=dict(color="#FF5722"), tickfont=dict(color="#FF5722")),
+            yaxis2=dict(title="MOVE (pt)", titlefont=dict(color="#3F51B5"), tickfont=dict(color="#3F51B5"), overlaying="y", side="right"),
+            hovermode="x unified",
+            margin=dict(l=20, r=20, t=40, b=20),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_vol, use_container_width=True)
+
+with risk_tab2:
+    if hy_df is not None and not hy_df.empty:
+        hy_period_years = st.selectbox("하이일드 기간 선택", [1, 2, 5, 10], index=2, format_func=lambda x: f"최근 {x}년")
+        cutoff_date = pd.Timestamp.now() - pd.DateOffset(years=hy_period_years)
+        filtered_hy = hy_df[hy_df.index >= cutoff_date]
+        
+        fig_hy = go.Figure()
+        fig_hy.add_trace(go.Scatter(
+            x=filtered_hy.index, y=filtered_hy['BAMLH0A0HYM2'], mode='lines',
+            name='US High Yield OAS (%p)', line=dict(color='#D32F2F', width=2),
+            fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)'
+        ))
+        # 5% 주의선, 7% 위기 기준선 추가
+        fig_hy.add_hline(y=5.0, line_dash="dot", line_color="orange", annotation_text="경계선 (5.0%p)")
+        fig_hy.add_hline(y=7.0, line_dash="dash", line_color="red", annotation_text="위기/침체선 (7.0%p)")
+        fig_hy.update_layout(
+            title=f"미국 하이일드 채권 스프레드 (HY OAS) 추이 (최근 {hy_period_years}년)",
+            xaxis_title="일자",
+            yaxis_title="스프레드 (%p)",
+            hovermode="x unified",
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig_hy, use_container_width=True)
+
+st.divider()
+
+# ==========================================
+# 7. 개별 지표 상세 차트
 # ==========================================
 st.subheader("지표별 기간별 단독 차트")
 
@@ -365,7 +543,7 @@ except Exception:
 st.divider()
 
 # ==========================================
-# 7. 다중 지표 오버레이 비교 차트
+# 8. 다중 지표 오버레이 비교 차트
 # ==========================================
 st.subheader("🔀 다중 지표 오버레이 비교 차트")
 
