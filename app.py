@@ -943,7 +943,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             "total_count": len(latest_df),
             "top10_weight": latest_df.head(10)['weight'].sum()
         }
-
+"""
         # 원/달러 전일 종가 조회하여 원화 AUM 계산
         usdkrw_hist = fetch_ticker_data_local("KRW=X", period="5d")
         usdkrw_prev = 1416.85
@@ -957,7 +957,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
             aum_krw_str = f"약 {total_aum_krw/1e12:,.1f}조 원"
         else:
             aum_krw_str = f"약 {total_aum_krw/1e8:,.0f}억 원"
-
+"""
         # 1. 메인 요약 메트릭 카드 (원화 환산 병기)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric(
@@ -1013,7 +1013,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 values='value',
                 title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top {tree_n}, {meta['report_date']} 기준)",
                 color='weight',
-                color_continuous_scale='Cividis'
+                color_continuous_scale='Burg'
             )
             
             fig_tree.update_traces(
