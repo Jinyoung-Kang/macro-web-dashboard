@@ -1,6 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import plotly.graph_objects as go
+import pandas as pd
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
@@ -98,6 +99,8 @@ def fetch_ticker_data(symbol, period="5d"):
         return None
 
 collected_data = {}
+rate_10y_curr, rate_10y_prev = None, None
+rate_2y_curr, rate_2y_prev = None, None
 
 for cat_name, tickers in MACRO_CATEGORIES.items():
     collected_data[cat_name] = []
@@ -109,6 +112,12 @@ for cat_name, tickers in MACRO_CATEGORIES.items():
             prev_price = hist['Close'].iloc[-2]
             delta = curr_price - prev_price
             pct_change = (delta / prev_price) * 100
+            
+            # 10Y 및 2Y 금리 값 추출 (스프레드 계산용)
+            if ticker_symbol == "^TNX":
+                rate_10y_curr, rate_10y_prev = curr_price, prev_price
+            elif ticker_symbol == "2YY=F":
+                rate_2y_curr, rate_2y_prev = curr_price, prev_price
             
             if "JPY/KRW" in name and curr_price < 50:
                 curr_price *= 100
@@ -134,6 +143,7 @@ for cat_name, tickers in MACRO_CATEGORIES.items():
         else:
             collected_data[cat_name].append({"name": name, "price_str": "N/A", "prev_str": "N/A", "delta_str": "N/A", "status": "fail"})
 
+# 텍스트 리포트 문자열 생성
 lines = [
     "📌 [글로벌 매크로 지표 브리핑]",
     f"⏱ 기준 시각: {now_str}",
@@ -148,6 +158,16 @@ for cat_name, items in collected_data.items():
             lines.append(f"• {item['name']:<20} : {item['price_str']:>9} (전일: {item['prev_str']:>9}) | 전일비 {item['delta_str']}")
         else:
             lines.append(f"• {item['name']:<20} : {item['price_str']:>9} | {item['delta_str']}")
+
+# 10Y-2Y 장단기 금리차 텍스트 추가
+if rate_10y_curr is not None and rate_2y_curr is not None:
+    curr_spread = rate_10y_curr - rate_2y_curr
+    prev_spread = rate_10y_prev - rate_2y_prev
+    spread_delta = curr_spread - prev_spread
+    lines.append("\n📊 주요 거시 스프레드")
+    lines.append("-" * 45)
+    lines.append(f"• 10Y-2Y 장단기 금리차  : {curr_spread:>8.2f}%p (전일: {prev_spread:>8.2f}%p) | 전일비 {spread_delta:+.2f}%p")
+
 lines.append("\n" + "=" * 55)
 report_text = "\n".join(lines)
 
@@ -196,7 +216,94 @@ for cat_name, items in collected_data.items():
 st.divider()
 
 # ==========================================
-# 5. 개별 지표 상세 차트
+# 5. 10Y-2Y 장단기 금리차 핵심 해석 모델 & 실시간 분석
+# ==========================================
+st.subheader("📊 10Y-2Y 장단기 금리차의 핵심 해석 모델")
+st.markdown("미국채 10년물(장기 금리)에서 2년물(단기 금리)을 뺀 값은 채권 시장에서 가장 주목하는 **경기 선행 지표**입니다.")
+
+# 수식 박스
+st.code("스프레드(Spread) = 장기 금리(미래 경기 전망) - 단기 금리(현재 통화 정책)", language="text")
+
+# 실시간 스프레드 진단 카드
+if rate_10y_curr is not None and rate_2y_curr is not None:
+    curr_spread = rate_10y_curr - rate_2y_curr
+    prev_spread = rate_10y_prev - rate_2y_prev
+    spread_delta = curr_spread - prev_spread
+    
+    if curr_spread < 0:
+        status_title = "🚨 역전 (Inversion)"
+        status_color = "red"
+        status_desc = "현재 인플레이션을 잡기 위해 금리를 급격히 올렸으나, 미래 경기는 침체될 것으로 시장이 확신하고 있습니다. **(역사적으로 1~2년 내 경기 침체 Recession 도래)**"
+    elif 0 <= curr_spread <= 0.2:
+        status_title = "⚠️ 평탄화 (Flattening)"
+        status_color = "orange"
+        status_desc = "미래 경기 성장이 둔화될 것이라는 우려가 커지기 시작했습니다. **(경기 정점 통과 및 둔화 신호)**"
+    else:
+        status_title = "✅ 정상 (Normal)"
+        status_color = "green"
+        status_desc = "장기 미래의 불확실성(프리미엄)으로 인해 장기 금리가 더 높은 정상 상태입니다. **(경제의 점진적인 성장 및 안정적 확장)**"
+
+    sc1, sc2 = st.columns([1, 2])
+    with sc1:
+        st.metric(
+            label="현재 10Y - 2Y 스프레드",
+            value=f"{curr_spread:+.2f} %p",
+            delta=f"{spread_delta:+.2f} %p (전일비)"
+        )
+        st.caption(f"10Y: `{rate_10y_curr:.2f}%` | 2Y: `{rate_2y_curr:.2f}%` (전일: `{prev_spread:+.2f}%p`)")
+    with sc2:
+        st.markdown(f"**현재 시장 진단:** :{status_color}[{status_title}]")
+        st.write(status_desc)
+
+# 핵심 해석 모델 표 렌더링
+spread_table_data = {
+    "시장 상태": ["정상 (Normal)", "평탄화 (Flattening)", "역전 (Inversion) ⚠️"],
+    "스프레드 수치": ["양수 (+)", "0에 수렴", "음수 (-)"],
+    "시장의 심리 및 해석": [
+        "장기 미래의 불확실성(프리미엄)으로 인해 장기 금리가 더 높음.",
+        "미래 경기 성장이 둔화될 것이라는 우려가 커지기 시작함.",
+        "현재 인플레이션을 잡기 위해 금리를 급격히 올렸으나, 미래 경기는 침체될 것으로 확신함."
+    ],
+    "경제적 귀결": [
+        "경제의 점진적인 성장 및 안정적 확장",
+        "경기 정점 통과 및 둔화 신호",
+        "역사적으로 1~2년 내 경기 침체(Recession) 도래"
+    ]
+}
+st.dataframe(pd.DataFrame(spread_table_data), use_container_width=True, hide_index=True)
+
+# 10Y-2Y 전용 과거 추이 차트 (0선 기준선 포함)
+spread_period = st.selectbox("금리차 추이 기간 선택", ["6mo", "1y", "2y", "5y", "max"], index=2, key="spread_period_select")
+df_10y = fetch_ticker_data("^TNX", period=spread_period)
+df_2y = fetch_ticker_data("2YY=F", period=spread_period)
+
+if df_10y is not None and df_2y is not None and not df_10y.empty and not df_2y.empty:
+    merged_yield = pd.merge(df_10y[['Close']], df_2y[['Close']], left_index=True, right_index=True, suffixes=('_10Y', '_2Y')).dropna()
+    merged_yield['Spread'] = merged_yield['Close_10Y'] - merged_yield['Close_2Y']
+    
+    fig_spread = go.Figure()
+    fig_spread.add_trace(go.Scatter(
+        x=merged_yield.index,
+        y=merged_yield['Spread'],
+        mode='lines',
+        name='10Y-2Y 스프레드 (%p)',
+        line=dict(color='#E02424', width=2),
+        fill='tozeroy'
+    ))
+    fig_spread.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.8, annotation_text="기준선 (0%p 역전 경계)")
+    fig_spread.update_layout(
+        title=f"미국채 10Y - 2Y 스프레드 과거 추이 ({spread_period})",
+        xaxis_title="일자",
+        yaxis_title="스프레드 (%p)",
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig_spread, use_container_width=True)
+
+st.divider()
+
+# ==========================================
+# 6. 개별 지표 상세 차트
 # ==========================================
 st.subheader("지표별 기간별 단독 차트")
 
@@ -239,7 +346,7 @@ except Exception:
 st.divider()
 
 # ==========================================
-# 6. 다중 지표 오버레이 비교 차트
+# 7. 다중 지표 오버레이 비교 차트
 # ==========================================
 st.subheader("🔀 다중 지표 오버레이 비교 차트")
 
