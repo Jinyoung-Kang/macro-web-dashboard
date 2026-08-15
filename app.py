@@ -1013,14 +1013,14 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
                 values='value',
                 title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top {tree_n}, {meta['report_date']} 기준)",
                 color='weight',
-                color_continuous_scale='Blues'
+                color_continuous_scale='Cividis'
             )
             
             fig_tree.update_traces(
                 text=df_tree['display_label'],
                 textinfo="text",
                 textposition="middle center",
-                insidetextfont=dict(size=14, color="#FFFFFF", family="Arial, sans-serif"),
+                insidetextfont=dict(size=14, color="#161617", family="Arial, sans-serif"),
                 marker=dict(line=dict(color="#0F172A", width=1.5)),
                 hovertemplate="<b>%{label}</b><br>평가액: $%{value:,.0f}<br>포트폴리오 비중: %{color:.2f}%<extra></extra>"
             )
