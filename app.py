@@ -12,7 +12,7 @@ st.set_page_config(page_title="Global Macro Web Dashboard", layout="wide")
 def check_password():
     """올바른 비밀번호가 입력되었는지 검증하고 세션 상태를 유지합니다."""
     # Secrets에 설정된 비밀번호 가져오기 (없을 경우 기본 비밀번호 대체)
-    correct_password = st.secrets.get("auth", {}).get("password", "na0930@")
+    correct_password = st.secrets.get("auth", {}).get("password", "admin1234@")
 
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
