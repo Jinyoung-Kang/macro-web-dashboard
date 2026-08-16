@@ -5,7 +5,7 @@ import pandas as pd
 from services.liquidity_service import get_net_liquidity_data
 
 def render_liquidity_view():
-    st.title("💧 연준 순유동성 트래커 (Fed Net Liquidity Tracker)")
+    st.title("🏢 연준 순유동성 트래커 (Fed Net Liquidity Tracker)")
     st.caption("연준 총자산에서 재무부 일반계좌(TGA)와 역레포(ON RRP)를 차감한 실제 금융시장 가용 유동성을 모니터링합니다.")
 
     with st.spinner("연준(Fed) 및 재무부 유동성 데이터를 분석 중입니다..."):
