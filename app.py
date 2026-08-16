@@ -56,7 +56,7 @@ menu_selection = st.sidebar.radio(
     "이동할 메뉴를 선택하세요",
     [
         "📊 거시경제 매크로 지표", 
-        "💧 연준 순유동성 트래커",
+        "🏢 연준 순유동성 트래커",
         "🔄 섹터 & 자산군 로테이션",
         "📑 기관 13F 포트폴리오 분석", 
         "🎯 기관 13F Money 교집합",
@@ -71,7 +71,7 @@ st.sidebar.header("⚙️ 갱신 설정")
 auto_refresh_enabled = st.sidebar.checkbox("실시간 자동 새로고침 활성화", value=False)
 refresh_interval = st.sidebar.selectbox(
     "새로고침 주기",
-    options=[30, 60, 120, 300],
+    options=[10, 30, 60, 120, 300],
     index=2,
     format_func=lambda x: f"{x}초 간격"
 )
