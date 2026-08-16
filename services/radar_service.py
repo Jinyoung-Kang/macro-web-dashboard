@@ -3,7 +3,7 @@ import streamlit as st
 import requests
 import json
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from services.ls_service import get_ls_token
 
 LS_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
@@ -24,8 +24,7 @@ def fetch_investor_top_stocks(market_type="1", investor_type="1", trade_type="1"
     headers = {"Content-Type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "tr_cd": "t1664", "tr_cont": "N", "tr_cont_key": ""}
     payload = {
         "t1664InBlock": {
-            "mgubun": market_type, "vagubun": "1", "bdgubun": trade_type, "cdgubun": investor_type, 
-            "cnt": 50 # t1664는 cnt 허용
+            "mgubun": market_type, "vagubun": "1", "bdgubun": trade_type, "cdgubun": investor_type, "cnt": 50
         }
     }
 
@@ -44,47 +43,8 @@ def fetch_investor_top_stocks(market_type="1", investor_type="1", trade_type="1"
     except Exception as e: return None, f"통신 예외: {str(e)}"
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_period_investor_top_stocks(market_type="1", investor_type="1", trade_type="1", days=5):
-    """ [Tab 2] 특정 기간 누적 투자자별 매매 상위 (t1665) """
-    token, err = get_ls_token()
-    if err or not token: return None, f"토큰 오류: {err}"
-
-    end_dt = datetime.now()
-    start_dt = end_dt - timedelta(days=days)
-    fdt = start_dt.strftime("%Y%m%d")
-    tdt = end_dt.strftime("%Y%m%d")
-
-    url = f"{LS_BASE_URL}/stock/investor"
-    headers = {"Content-Type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "tr_cd": "t1665", "tr_cont": "N", "tr_cont_key": ""}
-    
-    # 🚨 FIX: HTTP 500 원인이었던 'cnt' 파라미터 삭제 (서버에서 미지원)
-    payload = {
-        "t1665InBlock": {
-            "mgubun": market_type, "vagubun": "1", "bdgubun": trade_type, "cdgubun": investor_type,
-            "fdt": fdt, "tdt": tdt
-        }
-    }
-
-    try:
-        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-        if resp.status_code == 200:
-            out_block = resp.json().get("t1665OutBlock1", [])
-            if out_block:
-                df = pd.DataFrame(out_block)
-                df['svalue'] = pd.to_numeric(df.get('value', df.get('svalue', 0)), errors='coerce')
-                df['price'] = pd.to_numeric(df.get('price', 0), errors='coerce')
-                df['diff'] = pd.to_numeric(df.get('diff', 0), errors='coerce')
-                
-                # API단에서 cnt를 지원하지 않으므로, Pandas 연산 후 상위 50개만 슬라이싱
-                df = df.head(50)
-                return df, None
-            return pd.DataFrame(), "해당 기간의 수급 데이터가 없습니다."
-        return None, f"API 호출 실패 (HTTP {resp.status_code}): {resp.text}"
-    except Exception as e: return None, f"통신 예외: {str(e)}"
-
-@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_investor_trend(market_type="1"):
-    """ [Tab 3] 시장 전체 투자자별 일별 매매 동향 추이 (t1615) """
+    """ [Tab 2] 시장 전체 투자자별 일별 매매 동향 추이 (t1615) """
     token, err = get_ls_token()
     if err or not token: return None, f"토큰 오류: {err}"
 
@@ -95,7 +55,7 @@ def fetch_market_investor_trend(market_type="1"):
             "gubun1": "2",        # 2: 일자별
             "gubun2": market_type,# 1: 코스피, 2: 코스닥
             "gubun3": "2",        # 2: 금액(백만원)
-            "date": ""            # 공란: 최근 일자부터 연속
+            "date": ""            
         }
     }
 
@@ -106,20 +66,27 @@ def fetch_market_investor_trend(market_type="1"):
             if out_block:
                 df = pd.DataFrame(out_block)
                 
-                # 🚨 FIX: API 응답에 따라 date 필드를 동적 매핑 (KeyError 방지)
-                date_col = 'date' if 'date' in df.columns else ('date1' if 'date1' in df.columns else None)
+                # 🚨 FIX: 서버가 어떤 이름으로 날짜를 주든 무조건 찾아서 매핑하는 동적 탐색 로직
+                date_col = None
+                possible_date_cols = ['date', 'date1', 'dt', 'trdt', 'biz_dt', 'tmdt', 'tdate']
+                for col in possible_date_cols:
+                    if col in df.columns:
+                        date_col = col
+                        break
+                
+                # 그래도 필드가 없다면, 무엇이 반환되었는지 화면에 강제로 표출시켜 디버깅 유도
                 if not date_col:
-                    return pd.DataFrame(), "응답에 날짜 필드가 누락되었습니다."
+                    return pd.DataFrame(), f"날짜 필드 누락. 수신된 원본 컬럼명: {list(df.columns)}"
 
                 df['date_dt'] = pd.to_datetime(df[date_col], format='%Y%m%d', errors='coerce')
                 
-                # .get()을 활용해 혹시 모를 특정 주체 누락(KeyError) 완벽 방어
+                # 데이터 매핑
                 df['foreign'] = df.get('sv_08', 0).apply(_safe_float)
                 df['inst'] = df.get('sv_17', 0).apply(_safe_float)
                 df['retail'] = df.get('sv_14', 0).apply(_safe_float)
                 
                 df = df.dropna(subset=['date_dt']).sort_values('date_dt').reset_index(drop=True)
-                df['date'] = df['date_dt'] # 뷰와의 호환성을 위해 date 컬럼 복원
+                df['date'] = df['date_dt']
                 
                 return df[['date', 'foreign', 'inst', 'retail']], None
             return pd.DataFrame(), "수급 추이 데이터가 없습니다."
