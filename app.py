@@ -10,6 +10,7 @@ from config import LIVE_CLOCK_HTML
 from views.macro_view import render_macro_view
 from views.sec_view import render_sec_view
 from views.consensus_view import render_consensus_view
+from views.sector_view import render_sector_view  # 신규 뷰 임포트
 
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -53,7 +54,8 @@ menu_selection = st.sidebar.radio(
     [
         "📊 거시경제 매크로 지표", 
         "📑 기관 13F 포트폴리오 분석", 
-        "🎯 기관 13F Money 교집합"
+        "🎯 기관 13F Money 교집합",
+        "🔄 섹터 & 자산군 로테이션"
     ],
     index=0
 )
@@ -91,3 +93,5 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     render_sec_view()
 elif menu_selection == "🎯 기관 13F Money 교집합":
     render_consensus_view()
+elif menu_selection == "🔄 섹터 & 자산군 로테이션":
+    render_sector_view()
