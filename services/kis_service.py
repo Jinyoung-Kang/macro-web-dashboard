@@ -3,14 +3,10 @@ import streamlit as st
 import requests
 import json
 
-# 한국투자증권 실전투자 REST API 도메인
 BASE_URL = "https://openapi.koreainvestment.com:9443"
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_kis_token():
-    """
-    한국투자증권 OAuth 2.0 접근 토큰(Access Token) 발급
-    """
     app_key = st.secrets.get("kis_api", {}).get("app_key")
     app_secret = st.secrets.get("kis_api", {}).get("app_secret")
 
@@ -39,10 +35,6 @@ def get_kis_token():
         return None, f"통신 예외 발생: {str(e)}"
 
 def fetch_kis_kospi_index():
-    """
-    한국투자증권 국내주식 업종/지수 현재가 조회 (TR: FHPUP02100000)
-    코스피 종합지수(0001) 실시간 데이터 반환
-    """
     token, err = get_kis_token()
     if err or not token:
         return None, f"토큰 오류: {err}"
@@ -56,13 +48,12 @@ def fetch_kis_kospi_index():
         "authorization": f"Bearer {token}",
         "appkey": app_key,
         "appsecret": app_secret,
-        # 과거 추이용 TR이 아닌 현재가 조회용 정확한 TR 적용
         "tr_id": "FHPUP02100000",
         "custtype": "P"
     }
     params = {
-        "FID_COND_MRKT_DIV_CODE": "U", # U: 업종
-        "FID_INPUT_ISCD": "0001"       # 0001: 코스피 종합
+        "FID_COND_MRKT_DIV_CODE": "U",
+        "FID_INPUT_ISCD": "0001"       
     }
 
     try:
@@ -73,10 +64,10 @@ def fetch_kis_kospi_index():
             if out:
                 price = float(out.get("bstp_nmix_prpr", 0))
                 diff = float(out.get("bstp_nmix_prdy_vrss", 0))
-                rate = float(out.get("bstp_nmix_prdy_cttr", 0))
+                # 오타 수정: bstp_nmix_prdy_cttr -> bstp_nmix_prdy_ctrt
+                rate = float(out.get("bstp_nmix_prdy_ctrt", 0))
                 sign = str(out.get("prdy_vrss_sign", "3"))
 
-                # 하락(4,5) 부호 처리
                 if sign in ["4", "5"]:
                     diff = -abs(diff)
                     rate = -abs(rate)
@@ -102,9 +93,6 @@ def fetch_kis_kospi_index():
         return None, f"통신 예외: {str(e)}"
 
 def fetch_kis_stock_quote(shcode: str = "005930"):
-    """
-    한국투자증권 국내주식 현재가 조회 (TR: FHKST01010100)
-    """
     token, err = get_kis_token()
     if err or not token:
         return None, err
@@ -122,7 +110,7 @@ def fetch_kis_stock_quote(shcode: str = "005930"):
         "custtype": "P"
     }
     params = {
-        "FID_COND_MRKT_DIV_CODE": "J", # J: 주식
+        "FID_COND_MRKT_DIV_CODE": "J",
         "FID_INPUT_ISCD": shcode.strip()
     }
 
