@@ -4,11 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from services.radar_service import (
-    fetch_investor_top_stocks, 
-    fetch_kis_ticker_investor_trend,
-    fetch_kis_kospi_market_trend
-)
+from services.radar_service import fetch_investor_top_stocks, fetch_kis_ticker_investor_trend
 from services.kis_service import fetch_kis_kospi_index
 
 def render_radar_view():
@@ -22,26 +18,27 @@ def render_radar_view():
         st.markdown(f"**현재 코스피 지수:** `{kospi_data['price']:,.2f} pt` (전일비 {kospi_data['diff']:+.2f} pt / {kospi_data['rate']:+.2f}%)")
     
     # ---------------------------------------------------------
-    # 2. 코스피 시장 전체 30영업일 누적 수급 흐름 (KIS 정식 API)
+    # 2. [신규] 코스피 시장 30영업일 누적 수급 흐름 (대장주 프록시 기법)
     # ---------------------------------------------------------
-    with st.spinner("코스피 시장 전체 누적 수급 흐름 분석 중..."):
-        df_mkt, err_mkt = fetch_kis_kospi_market_trend()
+    with st.spinner("코스피 방향성 누적 차트 구성 중..."):
+        # 시장 지수 전용 API가 차단되었으므로, 지수와 동기화되는 대장주(005930)를 프록시로 활용
+        df_proxy, err_proxy = fetch_kis_ticker_investor_trend("005930")
         
-    if err_mkt:
-        st.warning(f"시장 누적 수급 동향을 불러올 수 없습니다: {err_mkt}")
-    elif df_mkt is not None and not df_mkt.empty:
-        st.markdown("##### 📈 코스피 30영업일 전체 누적 수급 방향성")
-        st.caption("※ 과거 30영업일 전을 기준점 '0'으로 영점 조정(Zeroing)하여, 시장 주체들의 거시적 자금 매집/분산 흐름을 직관적으로 확인합니다.")
+    if err_proxy:
+        st.warning(f"시장 누적 수급 동향을 불러올 수 없습니다: {err_proxy}")
+    elif df_proxy is not None and not df_proxy.empty:
+        st.markdown("##### 📈 코스피 30영업일 누적 수급 흐름 (대장주 프록시 지표)")
+        st.caption("※ 증권사 API 제한을 우회하기 위해 시장을 주도하는 대장주의 누적 수급을 추적합니다. **가장 오래된 과거(30일 전)를 '0'으로 영점 조정**하여 시장 매집/분산 방향을 파악합니다.")
         
-        # 30일 전을 0으로 맞추는 누적합 연산
-        df_mkt['f_cum'] = df_mkt['foreign'].cumsum() - df_mkt['foreign'].iloc[0]
-        df_mkt['i_cum'] = df_mkt['inst'].cumsum() - df_mkt['inst'].iloc[0]
-        df_mkt['r_cum'] = df_mkt['retail'].cumsum() - df_mkt['retail'].iloc[0]
+        # 📌 30일 전 데이터를 0으로 맞추는 핵심 누적합 연산
+        df_proxy['f_cum'] = df_proxy['foreign'].cumsum() - df_proxy['foreign'].iloc[0]
+        df_proxy['i_cum'] = df_proxy['inst'].cumsum() - df_proxy['inst'].iloc[0]
+        df_proxy['r_cum'] = df_proxy['retail'].cumsum() - df_proxy['retail'].iloc[0]
         
         fig_mkt = go.Figure()
-        fig_mkt.add_trace(go.Scatter(x=df_mkt['date'], y=df_mkt['f_cum'], mode="lines", name="외국인 누적", line=dict(color="#3B82F6", width=3)))
-        fig_mkt.add_trace(go.Scatter(x=df_mkt['date'], y=df_mkt['i_cum'], mode="lines", name="기관 누적", line=dict(color="#F97316", width=3)))
-        fig_mkt.add_trace(go.Scatter(x=df_mkt['date'], y=df_mkt['r_cum'], mode="lines", name="개인 누적", line=dict(color="#10B981", width=3)))
+        fig_mkt.add_trace(go.Scatter(x=df_proxy['date'], y=df_proxy['f_cum'], mode="lines", name="외국인 누적", line=dict(color="#3B82F6", width=3)))
+        fig_mkt.add_trace(go.Scatter(x=df_proxy['date'], y=df_proxy['i_cum'], mode="lines", name="기관 누적", line=dict(color="#F97316", width=3)))
+        fig_mkt.add_trace(go.Scatter(x=df_proxy['date'], y=df_proxy['r_cum'], mode="lines", name="개인 누적", line=dict(color="#10B981", width=3)))
         
         fig_mkt.update_layout(
             height=300,
@@ -49,7 +46,8 @@ def render_radar_view():
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             margin=dict(l=10, r=10, t=10, b=10)
         )
-        fig_mkt.update_yaxes(title_text="누적 순매수 대금", zeroline=True, zerolinewidth=1.5, zerolinecolor='rgba(255,255,255,0.4)')
+        # 0점 기준선을 명확히 표시
+        fig_mkt.update_yaxes(title_text="누적 순매수 (주)", zeroline=True, zerolinewidth=2, zerolinecolor='rgba(255,255,255,0.5)')
         
         st.plotly_chart(fig_mkt, use_container_width=True)
 
@@ -162,6 +160,7 @@ def render_radar_view():
                 st.markdown("##### 📈 최근 30영업일 누적 수급 동향")
                 st.caption("30영업일 전을 기점(0)으로 영점 조정하여, 주체별 자금 매집/분산 누적 흐름을 파악합니다.")
                 
+                # 📌 30일 전 데이터를 0으로 맞추는 핵심 누적합 연산
                 df_ticker['foreign_cum'] = df_ticker['foreign'].cumsum() - df_ticker['foreign'].iloc[0]
                 df_ticker['inst_cum'] = df_ticker['inst'].cumsum() - df_ticker['inst'].iloc[0]
                 df_ticker['retail_cum'] = df_ticker['retail'].cumsum() - df_ticker['retail'].iloc[0]
@@ -177,7 +176,7 @@ def render_radar_view():
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                     margin=dict(l=20, r=20, t=20, b=20)
                 )
-                fig_cum.update_yaxes(title_text="누적 순매수 (주)", zeroline=True, zerolinewidth=1.5, zerolinecolor='rgba(255,255,255,0.3)')
+                fig_cum.update_yaxes(title_text="누적 순매수 (주)", zeroline=True, zerolinewidth=2, zerolinecolor='rgba(255,255,255,0.5)')
                 
                 st.plotly_chart(fig_cum, use_container_width=True)
 
