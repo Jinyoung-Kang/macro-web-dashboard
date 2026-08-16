@@ -9,6 +9,7 @@ from streamlit_autorefresh import st_autorefresh
 from config import LIVE_CLOCK_HTML
 from views.macro_view import render_macro_view
 from views.sec_view import render_sec_view
+from views.consensus_view import render_consensus_view  # 신규 뷰 임포트
 
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -49,7 +50,11 @@ if not check_password():
 st.sidebar.header("🧭 대시보드 메뉴")
 menu_selection = st.sidebar.radio(
     "이동할 메뉴를 선택하세요",
-    ["📊 거시경제 매크로 지표", "📑 기관 13F 포트폴리오 분석"],
+    [
+        "📊 거시경제 매크로 지표", 
+        "📑 기관 13F 포트폴리오 분석", 
+        "🎯 스마트 머니 교집합"
+    ],
     index=0
 )
 
@@ -84,3 +89,5 @@ if menu_selection == "📊 거시경제 매크로 지표":
     render_macro_view(now_str_kst, refresh_interval)
 elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     render_sec_view()
+elif menu_selection == "🎯 스마트 머니 교집합":
+    render_consensus_view()
