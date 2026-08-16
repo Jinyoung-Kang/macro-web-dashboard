@@ -122,12 +122,12 @@ RISK_MODEL_TABLE = {
     ]
 }
 
+
 LIVE_CLOCK_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
 <style>
-    /* 기본 리셋 및 다크 테마 폰트 설정 */
     body {
         margin: 0;
         padding: 0;
@@ -140,7 +140,6 @@ LIVE_CLOCK_HTML = """
         height: 100vh;
     }
     
-    /* 시계 컨테이너 모던 UI */
     .clock-container {
         display: flex;
         gap: 24px;
@@ -151,7 +150,6 @@ LIVE_CLOCK_HTML = """
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
     
-    /* 시장 상태 뱃지 공통 스타일 */
     .market-badge {
         margin-left: 10px;
         padding: 3px 8px;
@@ -162,11 +160,10 @@ LIVE_CLOCK_HTML = """
         display: inline-block;
     }
     
-    /* 상태별 테마 컬러 */
-    .status-trading { background: rgba(16, 185, 129, 0.15); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.4); } /* 거래 중 (녹색) */
-    .status-pre     { background: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); } /* 장 전 (주황색) */
-    .status-post    { background: rgba(139, 92, 246, 0.15); color: #8B5CF6; border: 1px solid rgba(139, 92, 246, 0.4); } /* 장 후 (보라색) */
-    .status-closed  { background: rgba(107, 114, 128, 0.15); color: #9CA3AF; border: 1px solid rgba(107, 114, 128, 0.4); } /* 휴장/장마감 (회색) */
+    .status-trading { background: rgba(16, 185, 129, 0.15); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.4); } /* 거래 중 */
+    .status-pre     { background: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); } /* 장 전 */
+    .status-post    { background: rgba(139, 92, 246, 0.15); color: #8B5CF6; border: 1px solid rgba(139, 92, 246, 0.4); } /* 장 후 */
+    .status-closed  { background: rgba(107, 114, 128, 0.15); color: #9CA3AF; border: 1px solid rgba(107, 114, 128, 0.4); } /* 휴장 / 장 마감 */
 </style>
 </head>
 <body>
@@ -176,33 +173,98 @@ LIVE_CLOCK_HTML = """
     </div>
 
     <script>
-        // 타임존 기반 시장 상태 판별 로직
+        // 외부 API로 동적 로딩할 공휴일 Set
+        let holidaysKR = new Set();
+        let holidaysUS = new Set();
+        let loadedYear = null;
+
+        // 외부 공공 API(Nager.Date)로부터 국가별 연간 공휴일 비동기 Fetch
+        async function fetchHolidays(year) {
+            if (loadedYear === year) return;
+            try {
+                const [resKR, resUS] = await Promise.all([
+                    fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/KR`),
+                    fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/US`)
+                ]);
+                
+                if (resKR.ok) {
+                    const dataKR = await resKR.json();
+                    holidaysKR = new Set(dataKR.map(h => h.date));
+                    // 5월 1일 근로자의 날 및 12월 31일 KRX 연말 휴장일 추가
+                    holidaysKR.add(`${year}-05-01`);
+                    holidaysKR.add(`${year}-12-31`);
+                }
+                
+                if (resUS.ok) {
+                    const dataUS = await resUS.json();
+                    holidaysUS = new Set(dataUS.map(h => h.date));
+                    // 성금요일(Good Friday) 계산 및 반영 (부활절 이틀 전)
+                    const goodFriday = calculateGoodFriday(year);
+                    if (goodFriday) holidaysUS.add(goodFriday);
+                }
+                
+                loadedYear = year;
+            } catch (err) {
+                console.warn("Holiday API load fallback:", err);
+            }
+        }
+
+        // 성금요일(Good Friday) 연산 알고리즘 (서수 역법)
+        function calculateGoodFriday(year) {
+            const a = year % 19;
+            const b = Math.floor(year / 100);
+            const c = year % 100;
+            const d = Math.floor(b / 4);
+            const e = b % 4;
+            const f = Math.floor((b + 8) / 25);
+            const g = Math.floor((b - f + 1) / 3);
+            const h = (19 * a + b - d - g + 15) % 30;
+            const i = Math.floor(c / 4);
+            const k = c % 4;
+            const l = (32 + 2 * e + 2 * i - h - k) % 7;
+            const m = Math.floor((a + 11 * h + 22 * l) / 451);
+            const month = Math.floor((h + l - 7 * m + 114) / 31);
+            const day = ((h + l - 7 * m + 114) % 31) + 1;
+            const easter = new Date(Date.UTC(year, month - 1, day));
+            easter.setUTCDate(easter.getUTCDate() - 2);
+            return easter.toISOString().split('T')[0];
+        }
+
         function getMarketStatus(timeZone, type) {
             const now = new Date();
-            const options = { timeZone: timeZone, weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false };
-            const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(now);
+            const tzString = now.toLocaleString("en-US", { timeZone: timeZone });
+            const tzDate = new Date(tzString);
             
-            const weekday = parts.find(p => p.type === 'weekday').value;
-            let hour = parseInt(parts.find(p => p.type === 'hour').value);
-            const minute = parseInt(parts.find(p => p.type === 'minute').value);
+            const year = tzDate.getFullYear();
+            const month = String(tzDate.getMonth() + 1).padStart(2, '0');
+            const date = String(tzDate.getDate()).padStart(2, '0');
+            const yyyymmdd = `${year}-${month}-${date}`;
             
-            if (hour === 24) hour = 0; // 자정 처리
-            const timeNum = hour * 100 + minute; // HHMM 형태의 숫자로 변환 (예: 9시 30분 -> 930)
+            const day = tzDate.getDay();
+            const hour = tzDate.getHours();
+            const minute = tzDate.getMinutes();
+            const timeNum = hour * 100 + minute;
 
-            // 1. 주말 휴장 처리
-            if (weekday === 'Sat' || weekday === 'Sun') {
-                return { text: "휴장", className: "status-closed" };
+            // 주말 휴장
+            if (day === 0 || day === 6) {
+                return { text: "휴장 (주말)", className: "status-closed" };
             }
 
-            // 2. KOSPI (한국 시간 기준)
+            // KOSPI 판별
             if (type === 'KOSPI') {
+                if (holidaysKR.has(yyyymmdd)) {
+                    return { text: "휴장 (공휴일)", className: "status-closed" };
+                }
                 if (timeNum >= 900 && timeNum < 1530) return { text: "거래 중", className: "status-trading" };
-                if (timeNum >= 800 && timeNum < 900)  return { text: "장 전", className: "status-pre" };
+                if (timeNum >= 830 && timeNum < 900)  return { text: "장 전", className: "status-pre" };
                 if (timeNum >= 1530 && timeNum <= 1800) return { text: "장 후", className: "status-post" };
                 return { text: "장 마감", className: "status-closed" };
             } 
-            // 3. NASDAQ (미국 동부 시간 기준)
+            // NASDAQ 판별
             else {
+                if (holidaysUS.has(yyyymmdd)) {
+                    return { text: "휴장 (공휴일)", className: "status-closed" };
+                }
                 if (timeNum >= 930 && timeNum < 1600) return { text: "거래 중", className: "status-trading" };
                 if (timeNum >= 400 && timeNum < 930)  return { text: "장 전", className: "status-pre" };
                 if (timeNum >= 1600 && timeNum <= 2000) return { text: "장 후", className: "status-post" };
@@ -210,9 +272,14 @@ LIVE_CLOCK_HTML = """
             }
         }
 
-        // 실시간 시계 및 뱃지 렌더링
         function updateTime() {
             const now = new Date();
+            const currentYear = now.getFullYear();
+            
+            // 연도가 바뀌거나 최초 로드 시 API 호출
+            if (loadedYear !== currentYear) {
+                fetchHolidays(currentYear);
+            }
             
             const kstOptions = { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
             const estOptions = { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
@@ -220,13 +287,11 @@ LIVE_CLOCK_HTML = """
             document.getElementById('kst-time').innerHTML = `<b>${new Intl.DateTimeFormat('ko-KR', kstOptions).format(now)}</b>`;
             document.getElementById('est-time').innerHTML = `<b>${new Intl.DateTimeFormat('ko-KR', estOptions).format(now)}</b>`;
 
-            // 한국 시장 상태 업데이트
             const kstStatus = getMarketStatus('Asia/Seoul', 'KOSPI');
             const kstBadge = document.getElementById('kst-status');
             kstBadge.innerText = kstStatus.text;
             kstBadge.className = "market-badge " + kstStatus.className;
 
-            // 미국 시장 상태 업데이트
             const estStatus = getMarketStatus('America/New_York', 'NASDAQ');
             const estBadge = document.getElementById('est-status');
             estBadge.innerText = estStatus.text;
@@ -234,7 +299,7 @@ LIVE_CLOCK_HTML = """
         }
 
         setInterval(updateTime, 1000);
-        updateTime(); // 스크립트 로드 시 즉시 1회 실행
+        updateTime();
     </script>
 </body>
 </html>
