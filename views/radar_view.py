@@ -4,7 +4,11 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from services.radar_service import fetch_investor_top_stocks, fetch_kis_ticker_investor_trend
+from services.radar_service import (
+    fetch_investor_top_stocks, 
+    fetch_kis_ticker_investor_trend,
+    fetch_kis_kospi_market_trend
+)
 from services.kis_service import fetch_kis_kospi_index
 
 def render_radar_view():
@@ -17,9 +21,41 @@ def render_radar_view():
     if kospi_data:
         st.markdown(f"**현재 코스피 지수:** `{kospi_data['price']:,.2f} pt` (전일비 {kospi_data['diff']:+.2f} pt / {kospi_data['rate']:+.2f}%)")
     
+    # ---------------------------------------------------------
+    # 2. 코스피 시장 전체 30영업일 누적 수급 흐름 (KIS 정식 API)
+    # ---------------------------------------------------------
+    with st.spinner("코스피 시장 전체 누적 수급 흐름 분석 중..."):
+        df_mkt, err_mkt = fetch_kis_kospi_market_trend()
+        
+    if err_mkt:
+        st.warning(f"시장 누적 수급 동향을 불러올 수 없습니다: {err_mkt}")
+    elif df_mkt is not None and not df_mkt.empty:
+        st.markdown("##### 📈 코스피 30영업일 전체 누적 수급 방향성")
+        st.caption("※ 과거 30영업일 전을 기준점 '0'으로 영점 조정(Zeroing)하여, 시장 주체들의 거시적 자금 매집/분산 흐름을 직관적으로 확인합니다.")
+        
+        # 30일 전을 0으로 맞추는 누적합 연산
+        df_mkt['f_cum'] = df_mkt['foreign'].cumsum() - df_mkt['foreign'].iloc[0]
+        df_mkt['i_cum'] = df_mkt['inst'].cumsum() - df_mkt['inst'].iloc[0]
+        df_mkt['r_cum'] = df_mkt['retail'].cumsum() - df_mkt['retail'].iloc[0]
+        
+        fig_mkt = go.Figure()
+        fig_mkt.add_trace(go.Scatter(x=df_mkt['date'], y=df_mkt['f_cum'], mode="lines", name="외국인 누적", line=dict(color="#3B82F6", width=3)))
+        fig_mkt.add_trace(go.Scatter(x=df_mkt['date'], y=df_mkt['i_cum'], mode="lines", name="기관 누적", line=dict(color="#F97316", width=3)))
+        fig_mkt.add_trace(go.Scatter(x=df_mkt['date'], y=df_mkt['r_cum'], mode="lines", name="개인 누적", line=dict(color="#10B981", width=3)))
+        
+        fig_mkt.update_layout(
+            height=300,
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=10, r=10, t=10, b=10)
+        )
+        fig_mkt.update_yaxes(title_text="누적 순매수 대금", zeroline=True, zerolinewidth=1.5, zerolinecolor='rgba(255,255,255,0.4)')
+        
+        st.plotly_chart(fig_mkt, use_container_width=True)
+
     st.divider()
 
-    # 2. 2단 탭 구성
+    # 3. 2단 탭 구성
     tab1, tab2 = st.tabs([
         "⚡ 실시간 시장 수급 레이더 (LS API)", 
         "🔍 개별 종목 수급 정밀 분석 (KIS API)"
@@ -100,9 +136,7 @@ def render_radar_view():
                 st.error(err_ticker)
             elif df_ticker is not None and not df_ticker.empty:
                 
-                # ---------------------------------------------------------
                 # 차트 1: 일별 수급 및 주가 변동
-                # ---------------------------------------------------------
                 st.markdown("##### 📊 일별 수급 및 주가 변동")
                 fig_daily = make_subplots(specs=[[{"secondary_y": True}]])
                 
@@ -124,9 +158,7 @@ def render_radar_view():
                 
                 st.plotly_chart(fig_daily, use_container_width=True)
 
-                # ---------------------------------------------------------
                 # 차트 2: 최근 30영업일 누적 수급 흐름
-                # ---------------------------------------------------------
                 st.markdown("##### 📈 최근 30영업일 누적 수급 동향")
                 st.caption("30영업일 전을 기점(0)으로 영점 조정하여, 주체별 자금 매집/분산 누적 흐름을 파악합니다.")
                 
@@ -149,9 +181,7 @@ def render_radar_view():
                 
                 st.plotly_chart(fig_cum, use_container_width=True)
 
-                # ---------------------------------------------------------
-                # 상세 데이터 테이블
-                # ---------------------------------------------------------
+                # 상세 표 출력
                 st.markdown("##### 📋 일자별 상세 수급 내역 (단위: 주)")
                 disp_ticker = df_ticker.sort_values('date', ascending=False).copy()
                 disp_ticker['date'] = disp_ticker['date'].dt.strftime('%Y-%m-%d')
