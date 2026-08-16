@@ -7,8 +7,7 @@ import streamlit as st
 def fetch_cftc_cot_legacy(contract_code: str, limit: int = 300):
     """
     CFTC Legacy COT (Futures Only) API 호출
-    - contract_code: 자산군 고유 코드
-    - limit: 조회할 과거 주(Week) 데이터 수 (최대 1000)
+    세 가지 투자자 그룹(Non-Commercial, Commercial, Non-Reportable)의 포지션 파싱
     """
     url = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"
     params = {
@@ -26,15 +25,31 @@ def fetch_cftc_cot_legacy(contract_code: str, limit: int = 300):
             
             df = pd.DataFrame(data)
             
-            # 날짜 및 수치 데이터 형변환
+            # 기준 날짜 포맷팅
             df['date'] = pd.to_datetime(df['report_date_as_yyyy_mm_dd']).dt.tz_localize(None)
-            df['long'] = pd.to_numeric(df.get('noncomm_positions_long_all', 0), errors='coerce').fillna(0)
-            df['short'] = pd.to_numeric(df.get('noncomm_positions_short_all', 0), errors='coerce').fillna(0)
             
-            # 순포지션 (Net Position) = Long - Short 계산
-            df['net_position'] = df['long'] - df['short']
+            # 1. 비상업적 투기세력 (Non-Commercial / 스마트머니)
+            df['nc_long'] = pd.to_numeric(df.get('noncomm_positions_long_all', 0), errors='coerce').fillna(0)
+            df['nc_short'] = pd.to_numeric(df.get('noncomm_positions_short_all', 0), errors='coerce').fillna(0)
+            df['nc_net'] = df['nc_long'] - df['nc_short']
             
-            return df[['date', 'long', 'short', 'net_position']], None
+            # 2. 상업적 헤지세력 (Commercial / 실수요자)
+            df['comm_long'] = pd.to_numeric(df.get('comm_positions_long_all', 0), errors='coerce').fillna(0)
+            df['comm_short'] = pd.to_numeric(df.get('comm_positions_short_all', 0), errors='coerce').fillna(0)
+            df['comm_net'] = df['comm_long'] - df['comm_short']
+            
+            # 3. 비보고 대상 소규모 투자자 (Non-Reportable / 개미)
+            df['nr_long'] = pd.to_numeric(df.get('nonrept_positions_long_all', 0), errors='coerce').fillna(0)
+            df['nr_short'] = pd.to_numeric(df.get('nonrept_positions_short_all', 0), errors='coerce').fillna(0)
+            df['nr_net'] = df['nr_long'] - df['nr_short']
+            
+            cols = [
+                'date', 
+                'nc_long', 'nc_short', 'nc_net',
+                'comm_long', 'comm_short', 'comm_net',
+                'nr_long', 'nr_short', 'nr_net'
+            ]
+            return df[cols], None
             
         return pd.DataFrame(), f"CFTC API 호출 실패 (HTTP {resp.status_code})"
     except Exception as e:
