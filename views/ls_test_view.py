@@ -10,9 +10,10 @@ def render_ls_test_view():
     st.subheader("1. OAuth 2.0 인증 토큰 발급 테스트")
     col_t1, col_t2 = st.columns([3, 1])
     with col_t2:
-        reissue = st.button("🔄 캐시 초기화 & 토큰 재발급", use_container_width=True)
+        reissue = st.button("🔄 캐시 초기화 & 재조회", use_container_width=True)
         if reissue:
             st.cache_data.clear()
+            st.rerun()
 
     with st.spinner("LS증권 인증 서버와 통신 중..."):
         token, token_err = get_ls_token()
@@ -31,7 +32,7 @@ def render_ls_test_view():
     # 2. 코스피 지수 (t1511 TR) 실시간 테스트
     st.subheader("2. 코스피 실시간 지수 (t1511 TR) 조회 테스트")
     with st.spinner("코스피 실시간 지수 수신 중..."):
-        kospi_data = fetch_kospi_index()
+        kospi_data, kospi_err = fetch_kospi_index()
 
     if kospi_data:
         st.success(f"✅ **코스피 실시간 수신 성공:** {kospi_data['hname']}")
@@ -40,11 +41,12 @@ def render_ls_test_view():
         k2.metric("전일 대비 등락", f"{kospi_data['diff']:+.2f} pt ({kospi_data['rate']:+.2f}%)")
         k3.metric("전일 종가", f"{kospi_data['prev_price']:,.2f} pt")
     else:
-        st.error("⚠️ 코스피 업종 지수 데이터를 수신하지 못했습니다.")
+        st.error(f"⚠️ **코스피 업종 지수 데이터를 수신하지 못했습니다.**")
+        st.code(f"상세 원인: {kospi_err}", language="text")
 
     st.divider()
 
-    # 3. 국내 주식 현재가 (t1102 TR) 조회 테스트
+    # 3. 개별 종목 현재가 (t1102 TR) 조회 테스트
     st.subheader("3. 개별 종목 현재가 (t1102 TR) 조회 테스트")
     col_s1, col_s2 = st.columns([2, 1])
     with col_s1:
