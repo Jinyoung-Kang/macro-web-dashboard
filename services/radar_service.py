@@ -84,17 +84,63 @@ def fetch_kis_ticker_investor_trend(shcode: str):
             if out_block:
                 df = pd.DataFrame(out_block)
                 
-                # API 명세 매핑 (날짜, 종가, 외인/기관/개인 순매수 수량)
                 df['date'] = pd.to_datetime(df['stck_bsop_date'], format='%Y%m%d', errors='coerce')
                 df['close'] = pd.to_numeric(df['stck_clpr'], errors='coerce')
                 df['foreign'] = pd.to_numeric(df['frgn_ntby_qty'], errors='coerce')
                 df['inst'] = pd.to_numeric(df['orgn_ntby_qty'], errors='coerce')
                 df['retail'] = pd.to_numeric(df['prsn_ntby_qty'], errors='coerce')
                 
-                # 최신 날짜가 밑으로 오도록 정렬 (차트 렌더링용)
                 df = df.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
                 return df[['date', 'close', 'foreign', 'inst', 'retail']], None
             return pd.DataFrame(), "해당 종목의 수급 데이터가 존재하지 않습니다."
         return None, f"KIS API 호출 실패 (HTTP {resp.status_code}): {resp.text}"
+    except Exception as e:
+        return None, f"통신 예외: {str(e)}"
+
+# ==========================================
+# 3. 시장 전체 수급 동향 (한국투자증권 FHKUP03500100)
+# ==========================================
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_kis_kospi_market_trend():
+    """ 코스피 시장 전체 일별 투자자 순매수 추이 (최근 30영업일) """
+    token, err = get_kis_token()
+    if err or not token:
+        return None, f"KIS 토큰 오류: {err}"
+
+    app_key = st.secrets.get("kis_api", {}).get("app_key")
+    app_secret = st.secrets.get("kis_api", {}).get("app_secret")
+
+    url = f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-investor"
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": app_key,
+        "appsecret": app_secret,
+        "tr_id": "FHKUP03500100",
+        "custtype": "P"
+    }
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "U",
+        "FID_INPUT_ISCD": "0001"  # 0001: 코스피 지수 종합
+    }
+
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        if resp.status_code == 200:
+            out_block = resp.json().get("output", [])
+            if out_block:
+                df = pd.DataFrame(out_block)
+                df['date'] = pd.to_datetime(df['stck_bsop_date'], format='%Y%m%d', errors='coerce')
+                df['close'] = pd.to_numeric(df.get('bstp_nmix_prpr', 0), errors='coerce')
+                
+                # 순매수 금액 매핑 (우선 대금 필드 확인 후 없으면 수량/기타 필드 폴백)
+                df['foreign'] = pd.to_numeric(df.get('frgn_ntby_tr_pbmn', df.get('frgn_ntby_qty', 0)), errors='coerce')
+                df['inst'] = pd.to_numeric(df.get('orgn_ntby_tr_pbmn', df.get('orgn_ntby_qty', 0)), errors='coerce')
+                df['retail'] = pd.to_numeric(df.get('prsn_ntby_tr_pbmn', df.get('prsn_ntby_qty', 0)), errors='coerce')
+                
+                df = df.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
+                return df[['date', 'close', 'foreign', 'inst', 'retail']], None
+            return pd.DataFrame(), "코스피 수급 데이터가 없습니다."
+        return None, f"KIS API 호출 실패 (HTTP {resp.status_code})"
     except Exception as e:
         return None, f"통신 예외: {str(e)}"
