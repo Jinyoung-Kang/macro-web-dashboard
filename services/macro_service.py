@@ -7,7 +7,6 @@ import io
 import re
 import os
 from config import MACRO_CATEGORIES
-from services.ls_service import fetch_kospi_index
 
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_ticker_data(symbol: str, period: str = "5d"):
@@ -106,32 +105,7 @@ def get_collected_macro_data():
         for name, ticker_symbol in tickers.items():
             display_name = name
 
-            # 1. 코스피 지수는 하이브리드 연산 (야후 종가 + LS증권 실시간 등락률)
-            if ticker_symbol == "^KS11":
-                ls_kospi, _ = fetch_kospi_index()
-                hist = fetch_ticker_data(ticker_symbol, period="5d")
-                
-                # LS 프록시 데이터와 야후 데이터가 모두 정상인 경우 결합
-                if ls_kospi and hist is not None and len(hist) >= 2:
-                    prev_price = hist['Close'].iloc[-2]  # 야후 파이낸스 기준 전일 종가
-                    realtime_rate = ls_kospi['rate']     # LS증권 ETF 실시간 등락률
-                    
-                    # 전일 종가에 실시간 등락률을 반영하여 실시간 지수 포인트 연산
-                    curr_price = prev_price * (1 + (realtime_rate / 100.0))
-                    delta = curr_price - prev_price
-                    display_name = "코스피 (KOSPI) :gray[[실시간 LS]]"
-
-                    collected_data[cat_name].append({
-                        "name": display_name,
-                        "price_str": f"{curr_price:,.2f}",
-                        "prev_str": f"{prev_price:,.2f}",
-                        "delta_str": f"{delta:+.2f} ({realtime_rate:+.2f}%)",
-                        "status": "ok"
-                    })
-                    continue
-                # 통신 실패 시 아래 2번 기본(야후 파이낸스 단독) 로직으로 자연스럽게 폴백(Fallback)됨
-
-            # 2. 기타 지표 및 폴백 처리: Yahoo Finance 단독 호출
+            # 데이터 왜곡 방지를 위해 하이브리드 연산 롤백: Yahoo Finance 단독 호출을 통한 100% 무결성 확보
             hist = fetch_ticker_data(ticker_symbol, period="5d")
             if hist is not None and len(hist) >= 2:
                 curr_price = hist['Close'].iloc[-1]
