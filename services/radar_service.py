@@ -110,7 +110,8 @@ def fetch_kis_kospi_market_trend():
     app_key = st.secrets.get("kis_api", {}).get("app_key")
     app_secret = st.secrets.get("kis_api", {}).get("app_secret")
 
-    url = f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-investor"
+    # 🚨 FIX: 404 에러 원인 수정. KIS API는 개별 종목과 시장 지수 조회를 동일한 URL 엔드포인트에서 처리함.
+    url = f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-investor"
     headers = {
         "Content-Type": "application/json; charset=utf-8",
         "authorization": f"Bearer {token}",
@@ -133,10 +134,10 @@ def fetch_kis_kospi_market_trend():
                 df['date'] = pd.to_datetime(df['stck_bsop_date'], format='%Y%m%d', errors='coerce')
                 df['close'] = pd.to_numeric(df.get('bstp_nmix_prpr', 0), errors='coerce')
                 
-                # 순매수 금액 매핑 (우선 대금 필드 확인 후 없으면 수량/기타 필드 폴백)
-                df['foreign'] = pd.to_numeric(df.get('frgn_ntby_tr_pbmn', df.get('frgn_ntby_qty', 0)), errors='coerce')
-                df['inst'] = pd.to_numeric(df.get('orgn_ntby_tr_pbmn', df.get('orgn_ntby_qty', 0)), errors='coerce')
-                df['retail'] = pd.to_numeric(df.get('prsn_ntby_tr_pbmn', df.get('prsn_ntby_qty', 0)), errors='coerce')
+                # 순매수 대금(금액) 추출 (백만원 단위)
+                df['foreign'] = pd.to_numeric(df.get('frgn_ntby_tr_pbmn', 0), errors='coerce')
+                df['inst'] = pd.to_numeric(df.get('orgn_ntby_tr_pbmn', 0), errors='coerce')
+                df['retail'] = pd.to_numeric(df.get('prsn_ntby_tr_pbmn', 0), errors='coerce')
                 
                 df = df.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
                 return df[['date', 'close', 'foreign', 'inst', 'retail']], None
