@@ -7,6 +7,7 @@ import io
 import re
 import os
 from config import MACRO_CATEGORIES
+from services.kis_service import fetch_kis_kospi_index
 
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_ticker_data(symbol: str, period: str = "5d"):
@@ -105,7 +106,27 @@ def get_collected_macro_data():
         for name, ticker_symbol in tickers.items():
             display_name = name
 
-            # 데이터 왜곡 방지를 위해 하이브리드 연산 롤백: Yahoo Finance 단독 호출을 통한 100% 무결성 확보
+            # 1. 코스피 지수는 한국투자증권(KIS) 실시간 API를 1순위로 호출
+            if ticker_symbol == "^KS11":
+                kis_kospi, _ = fetch_kis_kospi_index()
+                if kis_kospi:
+                    curr_price = kis_kospi['price']
+                    prev_price = kis_kospi['prev_price']
+                    delta = kis_kospi['diff']
+                    pct_change = kis_kospi['rate']
+                    display_name = "코스피 (KOSPI) :gray[[실시간 KIS]]"
+
+                    collected_data[cat_name].append({
+                        "name": display_name,
+                        "price_str": f"{curr_price:,.2f}",
+                        "prev_str": f"{prev_price:,.2f}",
+                        "delta_str": f"{delta:+.2f} ({pct_change:+.2f}%)",
+                        "status": "ok"
+                    })
+                    continue
+                # KIS API 장애 시 아래의 Yahoo Finance 로직으로 자연스럽게 폴백(Failover)됨
+
+            # 2. 기타 지표 및 코스피 폴백: Yahoo Finance 호출
             hist = fetch_ticker_data(ticker_symbol, period="5d")
             if hist is not None and len(hist) >= 2:
                 curr_price = hist['Close'].iloc[-1]
