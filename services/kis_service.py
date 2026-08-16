@@ -40,7 +40,7 @@ def get_kis_token():
 
 def fetch_kis_kospi_index():
     """
-    한국투자증권 국내주식 업종/지수 현재가 조회 (TR: FHKUP03500100)
+    한국투자증권 국내주식 업종/지수 현재가 조회 (TR: FHPUP02100000)
     코스피 종합지수(0001) 실시간 데이터 반환
     """
     token, err = get_kis_token()
@@ -56,8 +56,9 @@ def fetch_kis_kospi_index():
         "authorization": f"Bearer {token}",
         "appkey": app_key,
         "appsecret": app_secret,
-        "tr_id": "FHKUP03500100",
-        "custtype": "P" # P: 개인
+        # 과거 추이용 TR이 아닌 현재가 조회용 정확한 TR 적용
+        "tr_id": "FHPUP02100000",
+        "custtype": "P"
     }
     params = {
         "FID_COND_MRKT_DIV_CODE": "U", # U: 업종
@@ -82,6 +83,9 @@ def fetch_kis_kospi_index():
                 elif sign in ["1", "2"]:
                     diff = abs(diff)
                     rate = abs(rate)
+                else:
+                    diff = 0.0
+                    rate = 0.0
 
                 prev_price = price - diff
                 return {
