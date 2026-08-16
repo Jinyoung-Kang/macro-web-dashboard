@@ -95,7 +95,7 @@ components.html(LIVE_CLOCK_HTML, height=45)
 
 if menu_selection == "📊 거시경제 매크로 지표":
     render_macro_view(now_str_kst, refresh_interval)
-elif menu_selection == "💧 연준 순유동성 트래커":
+elif menu_selection == "🏢 연준 순유동성 트래커":
     render_liquidity_view()
 elif menu_selection == "🔄 섹터 & 자산군 로테이션":
     render_sector_view()
