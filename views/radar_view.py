@@ -5,18 +5,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 from services.radar_service import (
     fetch_investor_top_stocks, 
-    fetch_period_investor_top_stocks, 
     fetch_market_investor_trend
 )
 from services.kis_service import fetch_kis_kospi_index
 
-def format_treemap_and_table(df, market, investor, trade_type, is_period=False):
+def format_treemap_and_table(df, market, investor):
     """ 트리맵과 테이블을 렌더링하는 공통 헬퍼 함수 """
     if df.empty or df['svalue'].abs().sum() == 0:
-        if not is_period:
-            st.warning("⚠️ **장 마감 및 주말 상태 안내**\n\n현재 당일 실시간 수급 데이터가 0으로 초기화되었습니다. 평일 장중에만 정상 표출됩니다. (※ '기간별 누적' 탭이나 '시장 수급 추이' 탭을 이용해 과거 데이터를 확인하세요.)")
-        else:
-            st.warning("선택한 기간의 유효한 수급 데이터가 없습니다.")
+        st.warning("⚠️ **장 마감 및 주말 상태 안내**\n\n현재 당일 실시간 수급 데이터가 0으로 초기화되었습니다. 평일 장중에만 정상 표출됩니다. (※ '시장 전체 일별 수급 추이' 탭을 이용해 과거 데이터를 확인하세요.)")
         return
 
     plot_df = df.copy()
@@ -40,7 +36,6 @@ def format_treemap_and_table(df, market, investor, trade_type, is_period=False):
         fig.update_layout(height=500, margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig, use_container_width=True)
 
-    # 데이터 테이블
     st.subheader(f"📋 {market} {investor} Top 50 랭킹표")
     available_cols = [col for col in ['rank', 'hname', 'price', 'diff', 'svalue'] if col in df.columns]
     disp_df = df[available_cols].copy()
@@ -82,10 +77,9 @@ def render_radar_view():
 
     st.write("")
 
-    # 3. 3단 탭 구성
-    tab1, tab2, tab3 = st.tabs([
+    # 3. 2단 탭 구성
+    tab1, tab2 = st.tabs([
         "⚡ 실시간 당일 레이더", 
-        "📅 기간 누적 수급 레이더", 
         "📈 시장 전체 일별 수급 추이"
     ])
 
@@ -96,35 +90,22 @@ def render_radar_view():
             df_day, err_day = fetch_investor_top_stocks(market_val, investor_val, trade_val)
         if err_day: st.error(err_day)
         elif df_day is not None:
-            format_treemap_and_table(df_day, market, investor, trade_type, is_period=False)
+            format_treemap_and_table(df_day, market, investor)
 
-    # [Tab 2] 기간 누적
+    # [Tab 2] 시장 전체 일별 수급 추이
     with tab2:
-        period_days = st.radio("누적 조회 기간", [3, 5, 10, 20, 60], index=1, format_func=lambda x: f"최근 {x}일", horizontal=True)
-        st.markdown(f"#### 🗺️ 최근 {period_days}일 누적 수급 집중도 (Top 50)")
-        
-        with st.spinner(f"최근 {period_days}일 누적 데이터를 연산 중입니다..."):
-            df_period, err_per = fetch_period_investor_top_stocks(market_val, investor_val, trade_val, days=period_days)
-        if err_per: st.error(err_per)
-        elif df_period is not None:
-            format_treemap_and_table(df_period, market, investor, trade_type, is_period=True)
-
-    # [Tab 3] 시장 전체 일별 수급 추이
-    with tab3:
         st.markdown(f"#### 📈 {market} 일별 3대 주체 누적 순매수 금액 추이")
-        st.caption("최근 거래일 기준 코스피/코스닥 시장 전체의 외국인, 기관, 개인 순매수 금액(단위: 백만원) 라인 차트입니다.")
+        st.caption("코스피/코스닥 시장 전체의 외국인, 기관, 개인 순매수 금액(단위: 백만원) 라인 차트입니다.")
         
         with st.spinner("시장 일별 수급 동향을 불러오는 중입니다..."):
             df_trend, err_trend = fetch_market_investor_trend(market_val)
             
-        if err_trend: st.error(err_trend)
+        if err_trend: 
+            st.error(err_trend)
         elif df_trend is not None and not df_trend.empty:
             fig_trend = go.Figure()
-            # 외인 (Blue)
             fig_trend.add_trace(go.Scatter(x=df_trend['date'], y=df_trend['foreign'], mode='lines+markers', name='외국인', line=dict(color='#3B82F6', width=2)))
-            # 기관 (Orange)
             fig_trend.add_trace(go.Scatter(x=df_trend['date'], y=df_trend['inst'], mode='lines+markers', name='기관', line=dict(color='#F97316', width=2)))
-            # 개인 (Green)
             fig_trend.add_trace(go.Scatter(x=df_trend['date'], y=df_trend['retail'], mode='lines+markers', name='개인', line=dict(color='#10B981', width=2)))
             
             fig_trend.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.7)
@@ -138,7 +119,6 @@ def render_radar_view():
             st.plotly_chart(fig_trend, use_container_width=True)
             
             st.markdown("##### 📋 일자별 상세 수급 데이터 (단위: 백만원)")
-            # 날짜를 최신순으로 정렬 후 출력
             disp_trend = df_trend.sort_values('date', ascending=False).copy()
             disp_trend['date'] = disp_trend['date'].dt.strftime('%Y-%m-%d')
             disp_trend.columns = ['일자', '외국인 순매수', '기관 순매수', '개인 순매수']
