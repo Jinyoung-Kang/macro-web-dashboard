@@ -25,13 +25,12 @@ def get_common_available_dates(inst_histories: dict):
 
 def calculate_consensus_by_date(inst_histories: dict, target_report_date: str):
     """
-    특정 기준일(target_report_date)에 대한 각 기관의 포트폴리오를 대조하여 교집합 및 동시 매수 내역을 연산합니다.
+    특정 기준일(target_report_date)에 대한 각 기관의 포트폴리오를 대조하여 교집합, 동시 매수 및 동시 매도 내역을 연산합니다.
     """
     active_dfs = []
     participating_insts = []
 
     for inst_name, history in inst_histories.items():
-        # 대상 분기 인덱스 검색
         target_idx = None
         for idx, (_, q_meta) in enumerate(history):
             if q_meta['report_date'] == target_report_date:
@@ -45,7 +44,7 @@ def calculate_consensus_by_date(inst_histories: dict, target_report_date: str):
             curr_df['report_date'] = curr_meta['report_date']
             participating_insts.append(inst_name)
 
-            # 직전 분기 대비 액션 연산 (비교 가능한 직전 분기가 존재하는 경우)
+            # 직전 분기 대비 액션 연산
             if target_idx + 1 < len(history):
                 prev_df, _ = history[target_idx + 1]
                 merged = pd.merge(
@@ -66,10 +65,9 @@ def calculate_consensus_by_date(inst_histories: dict, target_report_date: str):
 
             active_dfs.append(curr_df)
 
-        if not active_dfs:
-            return None
+    if not active_dfs:
+        return None
 
-    # 전체 기관 데이터 병합
     all_records = pd.concat(active_dfs, ignore_index=True)
 
     # 종목별 교집합 집계
@@ -82,7 +80,6 @@ def calculate_consensus_by_date(inst_histories: dict, target_report_date: str):
         actions=('action', lambda x: list(x))
     ).reset_index()
 
-    # 보유 기관명 축약 포맷팅
     summary_df['holders_str'] = summary_df['holders'].apply(
         lambda h_list: ", ".join([h.split()[1] if len(h.split()) > 1 else h for h in h_list])
     )
@@ -90,6 +87,11 @@ def calculate_consensus_by_date(inst_histories: dict, target_report_date: str):
     # 동시 매수(신규 매수 또는 비중 확대) 기관 수 집계
     summary_df['buy_action_count'] = summary_df['actions'].apply(
         lambda acts: sum(1 for a in acts if "신규 매수" in str(a) or "비중 확대" in str(a))
+    )
+
+    # 동시 매도(전량 매도 또는 비중 축소) 기관 수 집계
+    summary_df['sell_action_count'] = summary_df['actions'].apply(
+        lambda acts: sum(1 for a in acts if "전량 매도" in str(a) or "비중 축소" in str(a))
     )
 
     return {
