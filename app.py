@@ -12,15 +12,13 @@ from views.sec_view import render_sec_view
 from views.consensus_view import render_consensus_view
 from views.sector_view import render_sector_view
 from views.liquidity_view import render_liquidity_view
-#from views.ls_test_view import render_ls_test_view
-#from views.kis_test_view import render_kis_test_view  # 한국투자증권 뷰 임포트
 from views.radar_view import render_radar_view
 from views.cot_view import render_cot_view
 
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-st.set_page_config(page_title="Global Macro & 13F Dashboard", layout="wide")
+st.set_page_config(page_title="Global Macro & 13F Dashboard", layout="wide", initial_sidebar_state="expanded")
 
 # ==========================================
 # 0. 간이 인증 (비밀번호 잠금) 시스템
@@ -53,7 +51,10 @@ if not check_password():
 # ==========================================
 # 1. 사이드바 네비게이션 & 갱신 설정
 # ==========================================
-st.sidebar.header("🧭 대시보드 메뉴")
+st.sidebar.markdown("## 🧭 Dashboard Menu")
+st.sidebar.caption("글로벌 매크로 및 시장 수급 정밀 분석 시스템")
+
+# 직관적이고 깔끔한 형태의 라디오 버튼 UI 적용
 menu_selection = st.sidebar.radio(
     "이동할 메뉴를 선택하세요",
     [
@@ -65,11 +66,19 @@ menu_selection = st.sidebar.radio(
         "🏛️ 글로벌 스마트머니 (COT)",
         "📡 외국인/기관 수급 레이더"        
     ],
-    index=0
+    index=0,
+    label_visibility="collapsed"
 )
 
 st.sidebar.divider()
-st.sidebar.header("⚙️ 갱신 설정")
+st.sidebar.markdown("#### 🔄 데이터 갱신 설정")
+
+# [신규] 수동 강제 새로고침 버튼 (API 캐시 메모리 완전 초기화)
+if st.sidebar.button("데이터 수동 새로고침 🚀", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
+
+# 기존 자동 새로고침 로직 유지
 auto_refresh_enabled = st.sidebar.checkbox("실시간 자동 새로고침 활성화", value=False)
 refresh_interval = st.sidebar.selectbox(
     "새로고침 주기",
@@ -85,6 +94,8 @@ st.sidebar.divider()
 if st.sidebar.button("로그아웃", use_container_width=True):
     st.session_state.authenticated = False
     st.rerun()
+
+st.sidebar.caption("© 2026 Macro Web Dashboard v2.2")
 
 # ==========================================
 # 2. 공통 헤더 시계 및 메뉴 렌더링
@@ -106,7 +117,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
 elif menu_selection == "🎯 기관 13F Money 교집합":
     render_consensus_view()
 elif menu_selection == "🏛️ 글로벌 스마트머니 (COT)":  
-        render_cot_view()
+    render_cot_view()
 elif menu_selection == "📡 외국인/기관 수급 레이더":
     render_radar_view()
-   
