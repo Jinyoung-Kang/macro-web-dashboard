@@ -72,3 +72,56 @@ def fetch_stock_quote(shcode: str = "005930"):
             return None, f"시세 조회 실패 (HTTP {resp.status_code}): {resp.text}"
     except Exception as e:
         return None, f"시세 통신 오류: {str(e)}"
+
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_kospi_index():
+    """
+    LS증권 업종 현재가(TR: t1511)를 호출하여 코스피 실시간 지수 데이터를 반환합니다.
+    - upcode: 001 (코스피 종합)
+    """
+    token, err = get_ls_token()
+    if err or not token:
+        return None
+
+    url = f"{BASE_URL}/stock/sector"
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "tr_cd": "t1511",
+        "tr_cont": "N",
+        "tr_cont_key": ""
+    }
+    payload = {
+        "t1511InBlock": {
+            "upcode": "001"
+        }
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=8)
+        if resp.status_code == 200:
+            data = resp.json().get("t1511OutBlock", {})
+            price = float(data.get("pricejisu", 0))
+            diff = float(data.get("change", data.get("jandiff", 0)))
+            sign = data.get("sign", "3")
+            
+            # 하락/하한 부호(-) 처리
+            if sign in ["4", "5"] and diff > 0:
+                diff = -diff
+
+            rate = float(data.get("diff", 0))
+            if sign in ["4", "5"] and rate > 0:
+                rate = -rate
+
+            prev_price = price - diff
+
+            if price > 0:
+                return {
+                    "price": price,
+                    "prev_price": prev_price,
+                    "diff": diff,
+                    "rate": rate
+                }
+    except Exception:
+        pass
+    return None
