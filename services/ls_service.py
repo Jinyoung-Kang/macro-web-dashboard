@@ -83,7 +83,6 @@ def fetch_kospi_index():
     if err or not token:
         return None
 
-    url = f"{BASE_URL}/stock/sector"
     headers = {
         "Content-Type": "application/json; charset=utf-8",
         "authorization": f"Bearer {token}",
@@ -97,31 +96,41 @@ def fetch_kospi_index():
         }
     }
 
-    try:
-        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=8)
-        if resp.status_code == 200:
-            data = resp.json().get("t1511OutBlock", {})
-            price = float(data.get("pricejisu", 0))
-            diff = float(data.get("change", data.get("jandiff", 0)))
-            sign = data.get("sign", "3")
-            
-            # 하락/하한 부호(-) 처리
-            if sign in ["4", "5"] and diff > 0:
-                diff = -diff
+    # /stock/sector 및 /stock/market-data 경로 순차 시도
+    for path in ["/stock/sector", "/stock/market-data"]:
+        try:
+            url = f"{BASE_URL}{path}"
+            resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=8)
+            if resp.status_code == 200:
+                data = resp.json().get("t1511OutBlock", {})
+                raw_jisu = data.get("jisu") or data.get("pricejisu") or data.get("price")
+                if raw_jisu is not None:
+                    price = float(raw_jisu)
+                    raw_change = float(data.get("change", 0))
+                    raw_diff = float(data.get("diff", 0))
+                    sign = str(data.get("sign", "3"))
 
-            rate = float(data.get("diff", 0))
-            if sign in ["4", "5"] and rate > 0:
-                rate = -rate
+                    # 하락/하한(4, 5) 부호 처리
+                    if sign in ["4", "5"]:
+                        diff = -abs(raw_change)
+                        rate = -abs(raw_diff)
+                    elif sign in ["1", "2"]:
+                        diff = abs(raw_change)
+                        rate = abs(raw_diff)
+                    else:
+                        diff = 0.0
+                        rate = 0.0
 
-            prev_price = price - diff
+                    prev_price = price - diff
 
-            if price > 0:
-                return {
-                    "price": price,
-                    "prev_price": prev_price,
-                    "diff": diff,
-                    "rate": rate
-                }
-    except Exception:
-        pass
+                    if price > 0:
+                        return {
+                            "price": price,
+                            "prev_price": prev_price,
+                            "diff": diff,
+                            "rate": rate,
+                            "hname": data.get("hname", "코스피")
+                        }
+        except Exception:
+            continue
     return None
