@@ -160,7 +160,7 @@ def render_liquidity_view():
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown("##### 🏛️  1. 연준 총자산 (WALCL)")
-            st.markdown("• :Columbia blue[증가 시 ]: 양적완화(QE)로 시중에 직접 달러 공급 ➔ :green[**유동성 증가 (+)**]")
+            st.markdown("• :columbia blue[증가 시 ]: 양적완화(QE)로 시중에 직접 달러 공급 ➔ :green[**유동성 증가 (+)**]")
             st.markdown("• :blue[감소 시 ]: 양적긴축(QT)으로 만기 채권 미재투자 ➔ :red[**유동성 흡수 (-)**]")
 
         with c2:
