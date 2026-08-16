@@ -81,7 +81,7 @@ def fetch_kospi_index():
     """
     token, err = get_ls_token()
     if err or not token:
-        return None
+        return None, f"토큰 오류: {err}"
 
     headers = {
         "Content-Type": "application/json; charset=utf-8",
@@ -96,21 +96,21 @@ def fetch_kospi_index():
         }
     }
 
-    # /stock/sector 및 /stock/market-data 경로 순차 시도
-    for path in ["/stock/sector", "/stock/market-data"]:
-        try:
-            url = f"{BASE_URL}{path}"
-            resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=8)
-            if resp.status_code == 200:
-                data = resp.json().get("t1511OutBlock", {})
-                raw_jisu = data.get("jisu") or data.get("pricejisu") or data.get("price")
+    # 1차 엔드포인트 (/stock/sector) 시도
+    url = f"{BASE_URL}/stock/sector"
+    try:
+        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=8)
+        if resp.status_code == 200:
+            res_json = resp.json()
+            out_block = res_json.get("t1511OutBlock", {})
+            if out_block:
+                raw_jisu = out_block.get("jisu") or out_block.get("pricejisu") or out_block.get("price")
                 if raw_jisu is not None:
                     price = float(raw_jisu)
-                    raw_change = float(data.get("change", 0))
-                    raw_diff = float(data.get("diff", 0))
-                    sign = str(data.get("sign", "3"))
+                    raw_change = float(out_block.get("change", out_block.get("jandiff", 0)))
+                    raw_diff = float(out_block.get("diff", 0))
+                    sign = str(out_block.get("sign", "3"))
 
-                    # 하락/하한(4, 5) 부호 처리
                     if sign in ["4", "5"]:
                         diff = -abs(raw_change)
                         rate = -abs(raw_diff)
@@ -122,15 +122,48 @@ def fetch_kospi_index():
                         rate = 0.0
 
                     prev_price = price - diff
+                    return {
+                        "price": price,
+                        "prev_price": prev_price,
+                        "diff": diff,
+                        "rate": rate,
+                        "hname": out_block.get("hname", "코스피")
+                    }, None
+            return None, f"응답 블록 누락: {res_json}"
+        else:
+            # 2차 엔드포인트 (/stock/market-data) 폴백 시도
+            url_fb = f"{BASE_URL}/stock/market-data"
+            resp_fb = requests.post(url_fb, headers=headers, data=json.dumps(payload), timeout=8)
+            if resp_fb.status_code == 200:
+                res_json = resp_fb.json()
+                out_block = res_json.get("t1511OutBlock", {})
+                if out_block:
+                    raw_jisu = out_block.get("jisu") or out_block.get("pricejisu") or out_block.get("price")
+                    if raw_jisu is not None:
+                        price = float(raw_jisu)
+                        raw_change = float(out_block.get("change", out_block.get("jandiff", 0)))
+                        raw_diff = float(out_block.get("diff", 0))
+                        sign = str(out_block.get("sign", "3"))
 
-                    if price > 0:
+                        if sign in ["4", "5"]:
+                            diff = -abs(raw_change)
+                            rate = -abs(raw_diff)
+                        elif sign in ["1", "2"]:
+                            diff = abs(raw_change)
+                            rate = abs(raw_diff)
+                        else:
+                            diff = 0.0
+                            rate = 0.0
+
+                        prev_price = price - diff
                         return {
                             "price": price,
                             "prev_price": prev_price,
                             "diff": diff,
                             "rate": rate,
-                            "hname": data.get("hname", "코스피")
-                        }
-        except Exception:
-            continue
-    return None
+                            "hname": out_block.get("hname", "코스피")
+                        }, None
+                return None, f"응답 블록 누락: {res_json}"
+            return None, f"HTTP 요청 실패 (코드 {resp.status_code}): {resp.text}"
+    except Exception as e:
+        return None, f"통신 예외: {str(e)}"
