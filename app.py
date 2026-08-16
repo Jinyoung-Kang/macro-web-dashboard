@@ -18,10 +18,34 @@ from views.cot_view import render_cot_view
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# 페이지 기본 설정
 st.set_page_config(page_title="Global Macro & 13F Dashboard", layout="wide", initial_sidebar_state="expanded")
 
 # ==========================================
-# 0. 간이 인증 (비밀번호 잠금) 시스템
+# 0. 커스텀 CSS 주입 (모던 UI & 메뉴 간격 조정)
+# ==========================================
+st.markdown("""
+<style>
+    /* 사이드바 라디오 메뉴 디자인 모던화 */
+    section[data-testid="stSidebar"] div.stRadio > div[role="radiogroup"] > label {
+        padding: 12px 15px !important;       /* 메뉴 내부 여백 (위아래 12px, 좌우 15px) */
+        margin-bottom: 8px !important;       /* 메뉴 간의 간격 띄우기 */
+        border-radius: 8px !important;       /* 모서리 둥글게 */
+        background-color: rgba(128, 128, 128, 0.05) !important; /* 은은한 배경색 */
+        transition: all 0.2s ease-in-out !important; /* 부드러운 애니메이션 효과 */
+        cursor: pointer;
+    }
+    
+    /* 마우스 호버(올렸을 때) 액션 */
+    section[data-testid="stSidebar"] div.stRadio > div[role="radiogroup"] > label:hover {
+        background-color: rgba(128, 128, 128, 0.15) !important; /* 배경색 진하게 */
+        transform: translateX(4px); /* 살짝 오른쪽으로 밀리는 입체감 */
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ==========================================
+# 1. 간이 인증 (비밀번호 잠금) 시스템
 # ==========================================
 def check_password():
     correct_password = st.secrets.get("auth", {}).get("password", "admin1234@")
@@ -49,9 +73,9 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 1. 사이드바 네비게이션 & 갱신 설정
+# 2. 사이드바 네비게이션 & 갱신 설정
 # ==========================================
-st.sidebar.markdown("## 🧭 Dashboard Menu")
+st.sidebar.markdown("## 대시보드 메뉴")
 st.sidebar.caption("글로벌 매크로 및 시장 수급 정밀 분석 시스템")
 
 # 직관적이고 깔끔한 형태의 라디오 버튼 UI 적용
@@ -64,7 +88,7 @@ menu_selection = st.sidebar.radio(
         "📑 기관 13F 포트폴리오 분석", 
         "🎯 기관 13F Money 교집합",
         "🏛️ 글로벌 스마트머니 (COT)",
-        "📡 외국인/기관 수급 레이더"        
+        "📡 외국인/기관 수급 레이더 (코스피)"        
     ],
     index=0,
     label_visibility="collapsed"
@@ -73,7 +97,7 @@ menu_selection = st.sidebar.radio(
 st.sidebar.divider()
 st.sidebar.markdown("#### 🔄 데이터 갱신 설정")
 
-# [신규] 수동 강제 새로고침 버튼 (API 캐시 메모리 완전 초기화)
+# 수동 강제 새로고침 버튼 (API 캐시 메모리 완전 초기화)
 if st.sidebar.button("데이터 수동 새로고침 🚀", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
@@ -95,10 +119,10 @@ if st.sidebar.button("로그아웃", use_container_width=True):
     st.session_state.authenticated = False
     st.rerun()
 
-st.sidebar.caption("© 2026 Macro Web Dashboard v2.2")
+st.sidebar.caption("© 2026 Macro Web Dashboard v2.3")
 
 # ==========================================
-# 2. 공통 헤더 시계 및 메뉴 렌더링
+# 3. 공통 헤더 시계 및 메뉴 렌더링
 # ==========================================
 kst_tz = ZoneInfo("Asia/Seoul")
 now_kst = datetime.now(kst_tz)
@@ -118,5 +142,5 @@ elif menu_selection == "🎯 기관 13F Money 교집합":
     render_consensus_view()
 elif menu_selection == "🏛️ 글로벌 스마트머니 (COT)":  
     render_cot_view()
-elif menu_selection == "📡 외국인/기관 수급 레이더":
+elif menu_selection == "📡 외국인/기관 수급 레이더 (코스피)":
     render_radar_view()
