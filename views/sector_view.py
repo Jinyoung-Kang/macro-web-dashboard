@@ -6,6 +6,20 @@ import pandas as pd
 from config import SECTOR_ETFS, ASSET_CLASS_ETFS
 from services.sector_service import calculate_returns_matrix
 
+def highlight_return(val):
+    """
+    수익률 수치에 따라 양수(초록색), 음수(빨간색), 0(회색) 텍스트 색상을 지정합니다.
+    """
+    try:
+        num = float(val)
+        if num > 0:
+            return 'color: #10B981; font-weight: 600;'
+        elif num < 0:
+            return 'color: #EF4444; font-weight: 600;'
+        return 'color: #94A3B8;'
+    except (ValueError, TypeError):
+        return ''
+
 def render_sector_view():
     st.title("🔄 섹터 & 자산군 로테이션 맵 (Sector Momentum & Rotation)")
     st.caption("S&P 500 11대 섹터 및 글로벌 핵심 자산군의 단기/중기 자금 이동과 주도 섹터(공격 vs 방어)를 모니터링합니다.")
@@ -17,6 +31,13 @@ def render_sector_view():
     if sector_df is None or sector_df.empty:
         st.error("섹터 데이터를 불러오는 데 실패했습니다. 잠시 후 다시 시도해주세요.")
         return
+
+    # 기준 거래일 추출
+    latest_date_str = ""
+    if sector_hist and "SPY" in sector_hist and not sector_hist["SPY"].empty:
+        latest_date_str = sector_hist["SPY"].index[-1].strftime('%Y-%m-%d')
+    elif asset_hist and "SPY" in asset_hist and not asset_hist["SPY"].empty:
+        latest_date_str = asset_hist["SPY"].index[-1].strftime('%Y-%m-%d')
 
     # 1. 메인 핵심 요약 메트릭
     best_1m = sector_df.sort_values(by="1M", ascending=False).iloc[0]
@@ -36,6 +57,8 @@ def render_sector_view():
         "📈 섹터별 누적 수익률 추이",
         "🌐 글로벌 자산군(Asset Class) 로테이션"
     ])
+
+    return_cols = ['1주(%)', '1개월(%)', '3개월(%)', '6개월(%)', '1년(%)', 'YTD(%)']
 
     # TAB 1: 11대 섹터 모멘텀 순위
     with tab1:
@@ -64,21 +87,25 @@ def render_sector_view():
         fig_bar.add_vline(x=0, line_dash="dash", line_color="white", opacity=0.6)
         fig_bar.update_layout(
             height=460,
-            title=f"11대 섹터 {period_sel} {mode_sel} 순위",
+            title=f"11대 섹터 {period_sel} {mode_sel} 순위 (기준일: {latest_date_str})",
             xaxis_title="수익률 (%)" if mode_sel == "단순 수익률 (%)" else "초과성과 (%p)",
             yaxis_title="",
             margin=dict(l=20, r=50, t=40, b=20)
         )
         st.plotly_chart(fig_bar, use_container_width=True)
 
-        st.markdown("#### 📋 11대 섹터 기간별 수익률 종합 매트릭스")
+        st.markdown(f"#### 📋 11대 섹터 기간별 수익률 종합 매트릭스 :gray[(기준일: {latest_date_str})]")
         disp_df = sector_df[['ticker', 'name', 'type', '1W', '1M', '3M', '6M', '1Y', 'YTD']].copy()
         disp_df.columns = ['티커', '섹터명', '성격', '1주(%)', '1개월(%)', '3개월(%)', '6개월(%)', '1년(%)', 'YTD(%)']
 
-        for c in ['1주(%)', '1개월(%)', '3개월(%)', '6개월(%)', '1년(%)', 'YTD(%)']:
-            disp_df[c] = disp_df[c].map('{:+.2f}%'.format)
+        # 색상 및 서식 적용
+        styled_disp = disp_df.style.format({c: '{:+.2f}%' for c in return_cols})
+        if hasattr(styled_disp, 'map'):
+            styled_disp = styled_disp.map(highlight_return, subset=return_cols)
+        else:
+            styled_disp = styled_disp.applymap(highlight_return, subset=return_cols)
 
-        st.dataframe(disp_df, use_container_width=True, hide_index=True)
+        st.dataframe(styled_disp, use_container_width=True, hide_index=True)
 
     # TAB 2: 누적 수익률 추이 비교 차트
     with tab2:
@@ -96,7 +123,6 @@ def render_sector_view():
 
         if selected_tickers and sector_hist:
             fig_trend = go.Figure()
-            # 벤치마크 SPY 추가
             if "SPY" in sector_hist:
                 spy_s = sector_hist["SPY"].iloc[-130:] if chart_period == "6mo" else sector_hist["SPY"]
                 spy_ret = ((spy_s - spy_s.iloc[0]) / spy_s.iloc[0]) * 100
@@ -146,15 +172,21 @@ def render_sector_view():
             fig_asset.add_vline(x=0, line_dash="dash", line_color="white", opacity=0.6)
             fig_asset.update_layout(
                 height=460,
-                title=f"글로벌 주요 자산군 {asset_period} 수익률 순위",
+                title=f"글로벌 주요 자산군 {asset_period} 수익률 순위 (기준일: {latest_date_str})",
                 xaxis_title="수익률 (%)", yaxis_title="",
                 margin=dict(l=20, r=50, t=40, b=20)
             )
             st.plotly_chart(fig_asset, use_container_width=True)
 
-            st.markdown("#### 📋 자산군별 기간별 수익률표")
+            st.markdown(f"#### 📋 자산군별 기간별 수익률표 :gray[(기준일: {latest_date_str})]")
             disp_asset = asset_df[['ticker', 'name', 'type', '1W', '1M', '3M', '6M', '1Y', 'YTD']].copy()
             disp_asset.columns = ['티커', '자산군 명칭', '카테고리', '1주(%)', '1개월(%)', '3개월(%)', '6개월(%)', '1년(%)', 'YTD(%)']
-            for c in ['1주(%)', '1개월(%)', '3개월(%)', '6개월(%)', '1년(%)', 'YTD(%)']:
-                disp_asset[c] = disp_asset[c].map('{:+.2f}%'.format)
-            st.dataframe(disp_asset, use_container_width=True, hide_index=True)
+
+            # 색상 및 서식 적용
+            styled_asset = disp_asset.style.format({c: '{:+.2f}%' for c in return_cols})
+            if hasattr(styled_asset, 'map'):
+                styled_asset = styled_asset.map(highlight_return, subset=return_cols)
+            else:
+                styled_asset = styled_asset.applymap(highlight_return, subset=return_cols)
+
+            st.dataframe(styled_asset, use_container_width=True, hide_index=True)
