@@ -11,7 +11,8 @@ from views.macro_view import render_macro_view
 from views.sec_view import render_sec_view
 from views.consensus_view import render_consensus_view
 from views.sector_view import render_sector_view
-from views.liquidity_view import render_liquidity_view  # 신규 뷰 임포트
+from views.liquidity_view import render_liquidity_view
+from views.ls_test_view import render_ls_test_view  # 신규 뷰 임포트
 
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -57,7 +58,8 @@ menu_selection = st.sidebar.radio(
         "💧 연준 순유동성 트래커",
         "🔄 섹터 & 자산군 로테이션",
         "📑 기관 13F 포트폴리오 분석", 
-        "🎯 기관 13F Money 교집합"
+        "🎯 기관 13F Money 교집합",
+        "🧪 LS증권 API 테스트"
     ],
     index=0
 )
@@ -99,3 +101,5 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     render_sec_view()
 elif menu_selection == "🎯 기관 13F Money 교집합":
     render_consensus_view()
+elif menu_selection == "🧪 LS증권 API 테스트":
+    render_ls_test_view()
