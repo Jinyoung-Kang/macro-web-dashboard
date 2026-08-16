@@ -69,7 +69,8 @@ def render_kis_test_view():
         # 한국투자증권 응답 필드 파싱
         price = float(quote_data.get("stck_prpr", 0))       # 현재가
         diff = float(quote_data.get("prdy_vrss", 0))        # 전일대비
-        rate = float(quote_data.get("prdy_cttr", 0))        # 등락률
+        # 수정됨: prdy_cttr -> prdy_ctrt
+        rate = float(quote_data.get("prdy_ctrt", 0))        # 등락률 
         volume = int(quote_data.get("acml_vol", 0))         # 누적거래량
         value = int(quote_data.get("acml_tr_pbmn", 0))      # 누적거래대금
         
