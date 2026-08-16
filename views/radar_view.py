@@ -11,6 +11,7 @@ def render_radar_view():
     st.title("📡 정밀 수급 레이더 (Flow Radar)")
     st.caption("LS증권(실시간 시장 스캐닝)과 KIS증권(종목 정밀 시계열) 정식 API를 활용한 무결성 수급 분석")
 
+    # 1. 상단 KIS API 마켓 인덱스 확인
     with st.spinner("시장 지표 동기화 중..."):
         kospi_data, _ = fetch_kis_kospi_index()
     if kospi_data:
@@ -91,39 +92,75 @@ def render_radar_view():
             analyze_btn = st.button("차트 분석 실행", type="primary", use_container_width=True)
             
         if target_code:
-            with st.spinner("해당 종목의 30일 시계열 데이터를 불러오는 중..."):
+            with st.spinner("해당 종목의 30영업일 시계열 데이터를 불러오는 중..."):
                 df_ticker, err_ticker = fetch_kis_ticker_investor_trend(target_code.strip())
             
             if err_ticker:
                 st.error(err_ticker)
             elif df_ticker is not None and not df_ticker.empty:
-                # 콤보 차트 생성 (주가 선형 + 수급 막대형)
-                fig_t = make_subplots(specs=[[{"secondary_y": True}]])
                 
-                # 외인, 기관, 개인 수급을 누적(Bar)으로 표현
-                fig_t.add_trace(go.Bar(x=df_ticker['date'], y=df_ticker['foreign'], name="외국인 순매수", marker_color="#3B82F6"), secondary_y=False)
-                fig_t.add_trace(go.Bar(x=df_ticker['date'], y=df_ticker['inst'], name="기관 순매수", marker_color="#F97316"), secondary_y=False)
-                fig_t.add_trace(go.Bar(x=df_ticker['date'], y=df_ticker['retail'], name="개인 순매수", marker_color="#10B981"), secondary_y=False)
+                # ---------------------------------------------------------
+                # 차트 1: 일별 수급 & 주가 변동 (가독성 개선)
+                # ---------------------------------------------------------
+                st.markdown("##### 📊 일별 수급 및 주가 변동")
+                fig_daily = make_subplots(specs=[[{"secondary_y": True}]])
                 
-                # 주가 추이를 꺾은선으로 중첩
-                fig_t.add_trace(go.Scatter(x=df_ticker['date'], y=df_ticker['close'], mode="lines+markers", name="종가(우축)", line=dict(color="#EF4444", width=2)), secondary_y=True)
+                # 가독성을 위해 불투명도(opacity)를 낮추고 제로라인(0 기준선) 설정
+                fig_daily.add_trace(go.Bar(x=df_ticker['date'], y=df_ticker['foreign'], name="외국인(일별)", marker_color="#3B82F6", opacity=0.8), secondary_y=False)
+                fig_daily.add_trace(go.Bar(x=df_ticker['date'], y=df_ticker['inst'], name="기관(일별)", marker_color="#F97316", opacity=0.8), secondary_y=False)
+                fig_daily.add_trace(go.Bar(x=df_ticker['date'], y=df_ticker['retail'], name="개인(일별)", marker_color="#10B981", opacity=0.8), secondary_y=False)
+                
+                # 주가 추이를 명확한 꺾은선으로 중첩
+                fig_daily.add_trace(go.Scatter(x=df_ticker['date'], y=df_ticker['close'], mode="lines+markers", name="종가(우축)", line=dict(color="#EF4444", width=2.5), marker=dict(size=5)), secondary_y=True)
 
-                fig_t.update_layout(
-                    height=500,
+                fig_daily.update_layout(
+                    height=450,
                     barmode="group",
                     hovermode="x unified",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                    margin=dict(l=20, r=20, t=40, b=20)
+                    margin=dict(l=20, r=20, t=20, b=20)
                 )
-                fig_t.update_yaxes(title_text="순매수 수량 (주)", secondary_y=False)
-                fig_t.update_yaxes(title_text="주가 (원)", secondary_y=True)
+                # Y축 제로라인(0) 강조로 순매수/순매도 직관성 극대화
+                fig_daily.update_yaxes(title_text="순매수 수량 (주)", secondary_y=False, zeroline=True, zerolinewidth=1.5, zerolinecolor='rgba(255,255,255,0.3)')
+                fig_daily.update_yaxes(title_text="종가 (원)", secondary_y=True, showgrid=False)
                 
-                st.plotly_chart(fig_t, use_container_width=True)
+                st.plotly_chart(fig_daily, use_container_width=True)
 
+                # ---------------------------------------------------------
+                # 차트 2: 최근 30영업일 누적 수급 흐름 (신규 추가)
+                # ---------------------------------------------------------
+                st.markdown("##### 📈 최근 30영업일 누적 수급 동향")
+                st.caption("30영업일 전을 기점(0)으로 하여, 주체별 자금 매집/분산 누적 흐름을 파악합니다.")
+                
+                # 누적 합산(Cumulative Sum) 파생 변수 생성
+                df_ticker['foreign_cum'] = df_ticker['foreign'].cumsum()
+                df_ticker['inst_cum'] = df_ticker['inst'].cumsum()
+                df_ticker['retail_cum'] = df_ticker['retail'].cumsum()
+
+                fig_cum = go.Figure()
+                fig_cum.add_trace(go.Scatter(x=df_ticker['date'], y=df_ticker['foreign_cum'], mode="lines", name="외국인 누적", line=dict(color="#3B82F6", width=3)))
+                fig_cum.add_trace(go.Scatter(x=df_ticker['date'], y=df_ticker['inst_cum'], mode="lines", name="기관 누적", line=dict(color="#F97316", width=3)))
+                fig_cum.add_trace(go.Scatter(x=df_ticker['date'], y=df_ticker['retail_cum'], mode="lines", name="개인 누적", line=dict(color="#10B981", width=3)))
+
+                fig_cum.update_layout(
+                    height=400,
+                    hovermode="x unified",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    margin=dict(l=20, r=20, t=20, b=20)
+                )
+                fig_cum.update_yaxes(title_text="누적 순매수 (주)", zeroline=True, zerolinewidth=1.5, zerolinecolor='rgba(255,255,255,0.3)')
+                
+                st.plotly_chart(fig_cum, use_container_width=True)
+
+                # ---------------------------------------------------------
                 # 상세 표 출력
+                # ---------------------------------------------------------
                 st.markdown("##### 📋 일자별 상세 수급 내역 (단위: 주)")
                 disp_ticker = df_ticker.sort_values('date', ascending=False).copy()
                 disp_ticker['date'] = disp_ticker['date'].dt.strftime('%Y-%m-%d')
+                
+                # 누적 데이터 제외하고 원본 데이터만 깔끔하게 표출
+                disp_ticker = disp_ticker[['date', 'close', 'foreign', 'inst', 'retail']]
                 disp_ticker.columns = ['일자', '종가(원)', '외국인 순매수(주)', '기관 순매수(주)', '개인 순매수(주)']
                 
                 for c in disp_ticker.columns[1:]:
