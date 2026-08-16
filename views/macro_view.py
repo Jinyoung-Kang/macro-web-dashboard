@@ -41,7 +41,7 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
 
     # 1. 메인 시세 요약 카드
     st.subheader("실시간/최근 시세 요약")
-    st.info("💡 **변동 수치(+/-) 기준:** 각 지표 하단의 수치는 **직전 거래일 공식 종가(Previous Close) 대비 등락폭과 등락률(%)**입니다.", icon="ℹ️")
+    st.info("💡 **변동 수치(+/-) 기준:** 각 지표 하단의 수치는 '직전 거래일 공식 종가(Previous Close) 대비 등락폭과 등락률(%)'입니다.", icon="ℹ️")
 
     for cat_name, items in collected_data.items():
         st.markdown(f"#### {cat_name}")
