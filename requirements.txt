@@ -1,8 +1,9 @@
 streamlit
+requests
+pandas
+numpy
 yfinance
 plotly
-pandas
-requests
 streamlit-autorefresh
-beautifulsoup4
-lxml
+urllib3
+pykrx
