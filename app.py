@@ -89,5 +89,5 @@ if menu_selection == "📊 거시경제 매크로 지표":
     render_macro_view(now_str_kst, refresh_interval)
 elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     render_sec_view()
-elif menu_selection == "🎯 스마트 머니 교집합":
+elif menu_selection == "🎯 기관 13F Money 교집합":
     render_consensus_view()
