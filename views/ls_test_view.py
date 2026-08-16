@@ -29,19 +29,19 @@ def render_ls_test_view():
 
     st.divider()
 
-    # 2. 코스피 지수 (t1511 TR) 실시간 테스트
-    st.subheader("2. 코스피 실시간 지수 (t1511 TR) 조회 테스트")
-    with st.spinner("코스피 실시간 지수 수신 중..."):
+    # 2. 코스피 실시간 지수 (KODEX 프록시 우회) 테스트
+    st.subheader("2. 코스피 실시간 지수 (KODEX ETF 우회) 테스트")
+    with st.spinner("코스피 프록시 데이터 수신 중..."):
         kospi_data, kospi_err = fetch_kospi_index()
 
     if kospi_data:
-        st.success(f"✅ **코스피 실시간 수신 성공:** {kospi_data['hname']}")
+        st.success(f"✅ **코스피 실시간 수신 성공:** {kospi_data['hname']} 데이터를 통해 우회 산출 완료!")
         k1, k2, k3 = st.columns(3)
-        k1.metric("코스피 지수", f"{kospi_data['price']:,.2f} pt")
-        k2.metric("전일 대비 등락", f"{kospi_data['diff']:+.2f} pt ({kospi_data['rate']:+.2f}%)")
-        k3.metric("전일 종가", f"{kospi_data['prev_price']:,.2f} pt")
+        k1.metric("프록시 ETF 현재가", f"{kospi_data['price']:,.0f} 원")
+        k2.metric("전일 대비 등락", f"{kospi_data['diff']:+,.0f} 원 ({kospi_data['rate']:+.2f}%)")
+        k3.metric("전일 종가", f"{kospi_data['prev_price']:,.0f} 원")
     else:
-        st.error(f"⚠️ **코스피 업종 지수 데이터를 수신하지 못했습니다.**")
+        st.error(f"⚠️ **코스피 프록시 데이터를 수신하지 못했습니다.**")
         st.code(f"상세 원인: {kospi_err}", language="text")
 
     st.divider()
