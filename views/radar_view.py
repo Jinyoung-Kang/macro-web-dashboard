@@ -70,12 +70,27 @@ def render_radar_view():
 
     # 5. 상세 데이터 테이블
     st.subheader(f"📋 {market} {investor} Top 50 랭킹표")
-    disp_df = df[['rank', 'hname', 'price', 'diff', 'svalue']].copy()
-    disp_df.columns = ['순위', '종목명', '현재가(원)', '등락률(%)', f'금액(백만원)']
+    
+    # 존재하는 컬럼만 추출하여 KeyError 방지
+    available_cols = [col for col in ['rank', 'hname', 'price', 'diff', 'svalue'] if col in df.columns]
+    disp_df = df[available_cols].copy()
+    
+    # 컬럼 이름 변경 (순서 주의)
+    new_col_names = []
+    if 'rank' in available_cols: new_col_names.append('순위')
+    if 'hname' in available_cols: new_col_names.append('종목명')
+    if 'price' in available_cols: new_col_names.append('현재가(원)')
+    if 'diff' in available_cols: new_col_names.append('등락률(%)')
+    if 'svalue' in available_cols: new_col_names.append('금액(백만원)')
+    
+    disp_df.columns = new_col_names
     
     # 테이블 UI 포맷팅
-    disp_df['현재가(원)'] = disp_df['현재가(원)'].map('{:,.0f}'.format)
-    disp_df['등락률(%)'] = disp_df['등락률(%)'].map('{:+.2f}%'.format)
-    disp_df[f'금액(백만원)'] = disp_df[f'금액(백만원)'].map('{:,.0f}'.format)
+    if '현재가(원)' in disp_df.columns:
+        disp_df['현재가(원)'] = disp_df['현재가(원)'].map('{:,.0f}'.format)
+    if '등락률(%)' in disp_df.columns:
+        disp_df['등락률(%)'] = disp_df['등락률(%)'].map('{:+.2f}%'.format)
+    if '금액(백만원)' in disp_df.columns:
+        disp_df['금액(백만원)'] = disp_df['금액(백만원)'].map('{:,.0f}'.format)
     
     st.dataframe(disp_df, use_container_width=True, hide_index=True)
