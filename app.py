@@ -62,6 +62,8 @@ menu_selection = st.sidebar.radio(
         "🎯 기관 13F Money 교집합",
         "🧪 LS증권 API 테스트",
         "🧪 한국투자증권 API 테스트"
+        "📡 외국인/기관 수급 레이더",  
+        "⚙️ API 시스템 모니터링"
     ],
     index=0
 )
@@ -107,3 +109,7 @@ elif menu_selection == "🧪 LS증권 API 테스트":
     render_ls_test_view()
 elif menu_selection == "🧪 한국투자증권 API 테스트":
     render_kis_test_view()
+elif menu_selection == "📡 외국인/기관 수급 레이더": # <--- 라우팅 추
+    render_radar_view()
+elif menu_selection == "⚙️ API 시스템 모니터링":
+    render_kis_test_view()    
