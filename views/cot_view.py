@@ -73,7 +73,9 @@ def render_cot_view():
     # ==========================================
     st.info(f"📅 **최신 데이터 기준일:** `{latest_date.strftime('%Y년 %m월 %d일')}` (매주 금요일 발표, 해당 주 화요일 장 마감 집계)")
     
-    st.markdown("#### 📌 주체별 최신 순포지션 (Net Position)")
+    # 🚨 유저 요청 반영: 선택한 자산 이름을 타이틀에 동적 매핑
+    st.markdown(f"#### 📌 [{selected_asset}] 주체별 최신 순포지션")
+    
     c1, c2, c3 = st.columns(3)
     c1.metric("🦈 스마트머니 (투기세력)", f"{nc_net:,.0f} 계약", f"{nc_wow:+,.0f} 계약 (WoW)")
     c2.metric("🛡️ 상업적 헷저 (실수요자)", f"{comm_net:,.0f} 계약", f"{(comm_net - (df['comm_net'].iloc[1] if len(df)>1 else comm_net)):+,.0f} 계약", delta_color="off")
