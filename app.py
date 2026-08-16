@@ -105,7 +105,7 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     render_sec_view()
 elif menu_selection == "🎯 기관 13F Money 교집합":
     render_consensus_view()
-elif menu == "🏛️ 글로벌 스마트머니 (COT)":  
+elif menu_selection == "🏛️ 글로벌 스마트머니 (COT)":  
         render_cot_view()
 elif menu_selection == "📡 외국인/기관 수급 레이더":
     render_radar_view()
