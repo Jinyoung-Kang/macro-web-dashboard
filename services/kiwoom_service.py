@@ -3,12 +3,15 @@ import streamlit as st
 import requests
 import json
 
+# ⚠️ 주의: 키움증권은 공식적으로 REST API를 제공하지 않습니다.
+# 만약 발급받으신 키가 '한국투자증권(KIS)'이라면 아래 URL의 주석을 해제하여 교체하세요.
+# BASE_URL = "https://openapi.koreainvestment.com:9443"
 BASE_URL = "https://api.kiwoom.com"
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_kiwoom_token():
     """
-    키움증권 REST API OAuth 2.0 접근 토큰(Access Token)을 발급받습니다.
+    REST API OAuth 2.0 접근 토큰(Access Token)을 발급받습니다.
     """
     app_key = st.secrets.get("kiwoom_api", {}).get("app_key")
     app_secret = st.secrets.get("kiwoom_api", {}).get("app_secret")
@@ -29,18 +32,24 @@ def get_kiwoom_token():
     try:
         resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
         if resp.status_code == 200:
-            token_data = resp.json()
+            try:
+                token_data = resp.json()
+            except Exception:
+                return None, f"JSON 파싱 실패. 서버 응답 본문: {resp.text[:200]}"
+            
             access_token = token_data.get("access_token") or token_data.get("token")
+            
+            # [오류 방어 로직] HTTP 200 성공이나, access_token이 없는 엣지 케이스 처리
+            if not access_token:
+                return None, f"통신은 성공했으나, 응답에 토큰 데이터가 없습니다. 실제 응답: {token_data}"
+                
             return access_token, None
         else:
             return None, f"토큰 발급 실패 (HTTP {resp.status_code}): {resp.text}"
     except Exception as e:
-        return None, f"통신 예외: {str(e)}"
+        return None, f"통신 예외 발생: {str(e)}"
 
 def fetch_kiwoom_stock_quote(shcode: str = "005930"):
-    """
-    키움증권 국내 주식 현재가 시세를 조회합니다.
-    """
     token, err = get_kiwoom_token()
     if err or not token:
         return None, err
@@ -76,10 +85,6 @@ def fetch_kiwoom_stock_quote(shcode: str = "005930"):
 
 @st.cache_data(ttl=15, show_spinner=False)
 def fetch_kiwoom_kospi_index():
-    """
-    키움증권 코스피 실시간 업종/지수 시세를 조회합니다.
-    (업종코드: 0001 또는 001)
-    """
     token, err = get_kiwoom_token()
     if err or not token:
         return None, err
