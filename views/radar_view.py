@@ -46,27 +46,38 @@ def render_radar_view():
     st.subheader("🗺️ 실시간 수급 집중도 히트맵 (Top 50)")
     st.caption("박스의 크기는 '자금 규모(순매수/순매도 금액)'이며, 색상은 당일 '등락률(%)'을 의미합니다. (초록: 하락 / 빨강: 상승)")
     
-    # 트리맵 시각화 (한국 주식 색상: 상승=Red, 하락=Blue계열)
-    fig = px.treemap(
-        df,
-        path=['hname'],
-        values='svalue',
-        color='diff',
-        color_continuous_scale=['#3B82F6', '#94A3B8', '#EF4444'], # Blue -> Gray -> Red
-        color_continuous_midpoint=0,
-    )
-    
-    fig.update_traces(
-        textinfo="label+value",
-        texttemplate="<b>%{label}</b><br>%{value:,.0f}백만<br>%{color:+.2f}%",
-        hovertemplate="<b>%{label}</b><br>금액: %{value:,.0f} 백만원<br>등락률: %{color:+.2f}%<extra></extra>"
-    )
-    
-    fig.update_layout(
-        height=500,
-        margin=dict(l=10, r=10, t=30, b=10)
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    # ⚠️ Plotly Treemap 에러 방지 처리: values 파라미터에는 양수만 허용됨
+    plot_df = df.copy()
+    # 결측치를 0으로 채우고 절대값 처리하여 그리기용 변수 생성
+    plot_df['plot_value'] = plot_df['svalue'].fillna(0).abs() 
+    # 박스 크기가 0이하인 유령 데이터 필터링
+    plot_df = plot_df[plot_df['plot_value'] > 0]
+
+    if plot_df.empty:
+        st.info("차트로 시각화할 수 있는 유효한 거래 금액 데이터가 없습니다.")
+    else:
+        # 트리맵 시각화 (한국 주식 색상: 상승=Red, 하락=Blue계열)
+        fig = px.treemap(
+            plot_df,
+            path=[px.Constant(f"{market} Top 50"), 'hname'], # 루트 계층을 명확히 주어 렌더링 안정성 확보
+            values='plot_value',
+            color='diff',
+            custom_data=['svalue'], # 원본 부호가 살아있는 데이터를 custom_data로 주입
+            color_continuous_scale=['#3B82F6', '#94A3B8', '#EF4444'], # Blue -> Gray -> Red
+            color_continuous_midpoint=0,
+        )
+        
+        # UI 레이블에 plot_value(양수) 대신 custom_data(원본)를 노출하도록 수정
+        fig.update_traces(
+            texttemplate="<b>%{label}</b><br>%{customdata[0]:,.0f}백만<br>%{color:+.2f}%",
+            hovertemplate="<b>%{label}</b><br>금액: %{customdata[0]:,.0f} 백만원<br>등락률: %{color:+.2f}%<extra></extra>"
+        )
+        
+        fig.update_layout(
+            height=500,
+            margin=dict(l=10, r=10, t=30, b=10)
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
     # 5. 상세 데이터 테이블
     st.subheader(f"📋 {market} {investor} Top 50 랭킹표")
@@ -75,7 +86,7 @@ def render_radar_view():
     available_cols = [col for col in ['rank', 'hname', 'price', 'diff', 'svalue'] if col in df.columns]
     disp_df = df[available_cols].copy()
     
-    # 컬럼 이름 변경 (순서 주의)
+    # 컬럼 이름 변경
     new_col_names = []
     if 'rank' in available_cols: new_col_names.append('순위')
     if 'hname' in available_cols: new_col_names.append('종목명')
