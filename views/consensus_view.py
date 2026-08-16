@@ -7,7 +7,7 @@ from config import INSTITUTIONS
 from services.consensus_service import get_consensus_data
 
 def render_consensus_view():
-    st.title("🎯 스마트 머니 교집합 분석 (Smart Money Consensus)")
+    st.title("🎯 기관 13F Money 교집합 분석 (Consensus Holdings)")
     st.caption("2개 이상의 주요 글로벌 기관이 동시에 보유하거나 집중 매수한 공통 종목(컨센서스)을 발굴합니다.")
 
     # 1. 기관 다중 선택 설정
@@ -83,7 +83,7 @@ def render_consensus_view():
             ))
             fig.update_layout(
                 height=max(420, top_n * 28 + 80),
-                title=f"스마트 머니 합산 평가액 상위 Top {top_n} (보유 기관수 색상 매핑)",
+                title=f"기관 13F Money 합산 평가액 상위 Top {top_n} (보유 기관수 색상 매핑)",
                 xaxis_title="합산 평가액 ($M)",
                 yaxis_title="",
                 margin=dict(l=20, r=40, t=40, b=20)
@@ -109,5 +109,5 @@ def render_consensus_view():
         display_tbl = filtered_df[['name', 'holder_count', 'holders_str', 'total_value', 'avg_weight', 'buy_action_count']].copy()
         display_tbl.columns = ['종목명 (Issuer)', '보유 기관수', '보유 기관 목록', '합산 평가액($)', '평균 비중(%)', '매수 활동 기관수']
         display_tbl['합산 평가액($)'] = display_tbl['합산 평가액($)'].map('${:,.0f}'.format)
-        display_tbl['평균 비중(%)'] = display_tbl['평가액($)'] = display_tbl['평균 비중(%)'].map('{:.2f}%'.format)
+        display_tbl['평균 비중(%)'] = display_tbl['평균 비중(%)'].map('{:.2f}%'.format)
         st.dataframe(display_tbl, use_container_width=True, hide_index=True)
