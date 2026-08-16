@@ -88,25 +88,3 @@ def fetch_stock_quote(shcode: str = "005930"):
             return None, f"시세 조회 실패 (HTTP {resp.status_code}): {resp.text}"
     except Exception as e:
         return None, f"시세 통신 오류: {str(e)}"
-
-@st.cache_data(ttl=15, show_spinner=False)
-def fetch_kospi_index():
-    """
-    지수 전용 TR 미지원 에러(IGW00215)를 우회하기 위해,
-    한국 증시를 대표하는 'KODEX 200 (069500)' ETF의 실시간 시세를 조회하여 등락률 프록시로 활용합니다.
-    """
-    data, err = fetch_stock_quote("069500")
-    if err or not data:
-        return None, f"프록시 ETF 통신 실패: {err}"
-
-    price = float(data.get("price", 0))
-    diff = float(data.get("change", 0))
-    rate = float(data.get("diff", 0))
-    
-    return {
-        "price": price,
-        "prev_price": price - diff,
-        "diff": diff,
-        "rate": rate,
-        "hname": "코스피 200 (KODEX ETF 프록시)"
-    }, None
