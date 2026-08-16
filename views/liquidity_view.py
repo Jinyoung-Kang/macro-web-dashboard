@@ -160,18 +160,18 @@ def render_liquidity_view():
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown("##### 🏛️  1. 연준 총자산 (WALCL)")
-            st.markdown("• :columbia blue[증가 시 ]: 양적완화(QE)로 시중에 직접 달러 공급 ➔ :green[**유동성 증가 (+)**]")
-            st.markdown("• :blue[감소 시 ]: 양적긴축(QT)으로 만기 채권 미재투자 ➔ :red[**유동성 흡수 (-)**]")
+            st.markdown("• :blue[증가 시 ] : 양적완화(QE)로 시중에 직접 달러 공급 ➔ :green[**유동성 증가 (+)**]")
+            st.markdown("• :blue[감소 시 ] : 양적긴축(QT)으로 만기 채권 미재투자 ➔ :red[**유동성 흡수 (-)**]")
 
         with c2:
             st.markdown("##### 🏦 2. 재무부 일반계좌 (TGA)")
-            st.markdown("• :blue[잔고 증가 ]: 정부가 국채를 발행해 시장 돈을 흡수 ➔ :red[**유동성 감소 (-)**]")
-            st.markdown("• :blue[잔고 감소 ]: 정부가 재정 지출 및 보조금 집행 ➔ :green[**시장에 달러 방출 (+)**]")
+            st.markdown("• :blue[잔고 증가 ] : 정부가 국채를 발행해 시장 돈을 흡수 ➔ :red[**유동성 감소 (-)**]")
+            st.markdown("• :blue[잔고 감소 ] : 정부가 재정 지출 및 보조금 집행 ➔ :green[**시장에 달러 방출 (+)**]")
 
         with c3:
             st.markdown("##### 🔄 3. 역레포 잔고 (ON RRP)")
-            st.markdown("• :blue[잔고 증가 ]: MMF가 돈을 굴릴 곳이 없어 연준에 예치 ➔ :red[**유동성 잠김 (-)**]")
-            st.markdown("• :blue[잔고 감소 ]: 예치금을 빼서 국채 매수 및 시중 투자 ➔ :green[**유동성 방출 (+)**]")
+            st.markdown("• :blue[잔고 증가 ] : MMF가 돈을 굴릴 곳이 없어 연준에 예치 ➔ :red[**유동성 잠김 (-)**]")
+            st.markdown("• :blue[잔고 감소 ] : 예치금을 빼서 국채 매수 및 시중 투자 ➔ :green[**유동성 방출 (+)**]")
 
         st.markdown("---")
         st.markdown("#### 🎯 실전 투자 체크포인트")
