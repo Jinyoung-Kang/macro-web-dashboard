@@ -46,7 +46,7 @@ def fetch_investor_top_stocks(market_type="1", investor_type="1", trade_type="1"
                 df['price'] = pd.to_numeric(df.get('price', 0), errors='coerce')
                 df['diff'] = pd.to_numeric(df.get('diff', 0), errors='coerce')
                 return df, None
-            return pd.DataFrame(), "수급 데이터가 없습니다."
+            return pd.DataFrame(), "수급 조건에 부합하는 데이터가 없습니다."
         return None, f"LS API 호출 실패 (HTTP {resp.status_code})"
     except Exception as e: 
         return None, f"통신 예외: {str(e)}"
@@ -94,54 +94,5 @@ def fetch_kis_ticker_investor_trend(shcode: str):
                 return df[['date', 'close', 'foreign', 'inst', 'retail']], None
             return pd.DataFrame(), "해당 종목의 수급 데이터가 존재하지 않습니다."
         return None, f"KIS API 호출 실패 (HTTP {resp.status_code}): {resp.text}"
-    except Exception as e:
-        return None, f"통신 예외: {str(e)}"
-
-# ==========================================
-# 3. 시장 전체 수급 동향 (한국투자증권 FHKUP03500100)
-# ==========================================
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_kis_kospi_market_trend():
-    """ 코스피 시장 전체 일별 투자자 순매수 추이 (최근 30영업일) """
-    token, err = get_kis_token()
-    if err or not token:
-        return None, f"KIS 토큰 오류: {err}"
-
-    app_key = st.secrets.get("kis_api", {}).get("app_key")
-    app_secret = st.secrets.get("kis_api", {}).get("app_secret")
-
-    # 🚨 FIX: 404 에러 원인 수정. KIS API는 개별 종목과 시장 지수 조회를 동일한 URL 엔드포인트에서 처리함.
-    url = f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-investor"
-    headers = {
-        "Content-Type": "application/json; charset=utf-8",
-        "authorization": f"Bearer {token}",
-        "appkey": app_key,
-        "appsecret": app_secret,
-        "tr_id": "FHKUP03500100",
-        "custtype": "P"
-    }
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "U",
-        "FID_INPUT_ISCD": "0001"  # 0001: 코스피 지수 종합
-    }
-
-    try:
-        resp = requests.get(url, headers=headers, params=params, timeout=10)
-        if resp.status_code == 200:
-            out_block = resp.json().get("output", [])
-            if out_block:
-                df = pd.DataFrame(out_block)
-                df['date'] = pd.to_datetime(df['stck_bsop_date'], format='%Y%m%d', errors='coerce')
-                df['close'] = pd.to_numeric(df.get('bstp_nmix_prpr', 0), errors='coerce')
-                
-                # 순매수 대금(금액) 추출 (백만원 단위)
-                df['foreign'] = pd.to_numeric(df.get('frgn_ntby_tr_pbmn', 0), errors='coerce')
-                df['inst'] = pd.to_numeric(df.get('orgn_ntby_tr_pbmn', 0), errors='coerce')
-                df['retail'] = pd.to_numeric(df.get('prsn_ntby_tr_pbmn', 0), errors='coerce')
-                
-                df = df.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
-                return df[['date', 'close', 'foreign', 'inst', 'retail']], None
-            return pd.DataFrame(), "코스피 수급 데이터가 없습니다."
-        return None, f"KIS API 호출 실패 (HTTP {resp.status_code})"
     except Exception as e:
         return None, f"통신 예외: {str(e)}"
