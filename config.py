@@ -46,6 +46,36 @@ INSTITUTIONS = {
     "🇺🇸 사이언 자산운용 (Scion Asset Management)": {"cik": "0001649339", "desc": "마이클 버리의 역발상 딥밸류 및 숏(풋옵션)/롱 전략 "}
 }
 
+# 11대 S&P 500 섹터 ETF 매핑
+SECTOR_ETFS = {
+    "XLK": {"name": "정보기술 (Technology)", "type": "공격 / 성장"},
+    "XLC": {"name": "통신서비스 (Communication)", "type": "공격 / 성장"},
+    "XLY": {"name": "임의소비재 (Consumer Discretionary)", "type": "경기민감 / 성장"},
+    "XLI": {"name": "산업재 (Industrials)", "type": "경기민감 / 가치"},
+    "XLF": {"name": "금융 (Financials)", "type": "경기민감 / 가치"},
+    "XLB": {"name": "소재 (Materials)", "type": "경기민감 / 원자재"},
+    "XLE": {"name": "에너지 (Energy)", "type": "경기민감 / 원자재"},
+    "XLV": {"name": "헬스케어 (Health Care)", "type": "방어주"},
+    "XLP": {"name": "필수소비재 (Consumer Staples)", "type": "방어주"},
+    "XLU": {"name": "유틸리티 (Utilities)", "type": "방어주 / 배당"},
+    "XLRE": {"name": "부동산 (Real Estate)", "type": "방어주 / 금리민감"}
+}
+
+# 글로벌 주요 자산군 ETF 매핑
+ASSET_CLASS_ETFS = {
+    "SPY": {"name": "미국 대형주 (S&P 500)", "category": "주식"},
+    "QQQ": {"name": "미국 기술주 (Nasdaq 100)", "category": "주식"},
+    "IWM": {"name": "미국 중소형주 (Russell 2000)", "category": "주식"},
+    "EEM": {"name": "신흥국 주식 (Emerging Markets)", "category": "주식"},
+    "TLT": {"name": "미국 20년+ 장기국채", "category": "채권"},
+    "IEF": {"name": "미국 7-10년 중기국채", "category": "채권"},
+    "SHY": {"name": "미국 1-3년 단기국채", "category": "채권"},
+    "GLD": {"name": "금 (Gold)", "category": "원자재"},
+    "USO": {"name": "원유 (WTI Crude Oil)", "category": "원자재"},
+    "DBA": {"name": "농산물 (Agriculture)", "category": "원자재"},
+    "UUP": {"name": "미국 달러 인덱스 ETF", "category": "통화"}
+}
+
 SPREAD_TABLE_DATA = {
     "시장 상태": ["정상 (Normal)", "평탄화 (Flattening)", "역전 (Inversion) ⚠️"],
     "스프레드 수치": ["양수 (+)", "0에 수렴", "음수 (-)"],
