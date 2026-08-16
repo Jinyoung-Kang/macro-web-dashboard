@@ -18,7 +18,6 @@ def render_consensus_view():
     default_selected = [
         "🇺🇸 버크셔 해서웨이 (Berkshire Hathaway)",
         "🇺🇸 듀케인 패밀리 오피스 (Duquesne Family Office)",
-        "🇺🇸 아팔루사 매니지먼트 (Appaloosa Management)"
     ]
     valid_defaults = [name for name in default_selected if name in inst_names]
 
