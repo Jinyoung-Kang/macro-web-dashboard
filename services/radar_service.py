@@ -4,6 +4,20 @@ import pandas as pd
 import requests
 import json
 from datetime import datetime, timedelta
+import sys
+
+# ==========================================
+# 🚨 [HOTFIX] pykrx 라이브러리 Python 3.12+ 호환성 패치
+# pkg_resources 모듈이 없는 최신 환경에서 pykrx가 뻗는 것을 방지하기 위해 가짜 모듈을 주입합니다.
+# ==========================================
+try:
+    import pkg_resources
+except ImportError:
+    import types
+    mock_pkg = types.ModuleType('pkg_resources')
+    mock_pkg.get_distribution = lambda x: type('MockDist', (object,), {'version': 'unknown'})()
+    sys.modules['pkg_resources'] = mock_pkg
+
 from pykrx import stock
 from services.ls_service import get_ls_token
 
@@ -65,12 +79,11 @@ def fetch_pykrx_period_top_stocks(market="KOSPI", investor="외국인", trade_ty
     """
     try:
         end_dt = datetime.now()
-        start_dt = end_dt - timedelta(days=days * 2) # 휴장일을 고려해 넉넉히 조회
+        start_dt = end_dt - timedelta(days=days * 2) 
         
         fdt = start_dt.strftime("%Y%m%d")
         tdt = end_dt.strftime("%Y%m%d")
 
-        # KRX 종목별 투자자 순매수 금액 수집 (단위: 원)
         df = stock.get_market_net_purchases_of_equities_by_ticker(fdt, tdt, market)
         if df is None or df.empty:
             return pd.DataFrame(), "KRX 수급 데이터를 불러올 수 없습니다."
@@ -81,14 +94,11 @@ def fetch_pykrx_period_top_stocks(market="KOSPI", investor="외국인", trade_ty
             elif investor == "기관": target_col = "기관합계"
             elif investor == "개인": target_col = "개인"
 
-        # 백만원 단위로 변환
         df['svalue'] = df[target_col] / 1000000
 
-        # 순매수/순매도 정렬
         ascending = True if trade_type == "순매도" else False
         df_sorted = df.sort_values(by='svalue', ascending=ascending).head(50).copy()
 
-        # 종목명 및 최근 종가/등락률 매핑
         ticker_list = df_sorted.index.tolist()
         result_rows = []
         
@@ -96,7 +106,6 @@ def fetch_pykrx_period_top_stocks(market="KOSPI", investor="외국인", trade_ty
             hname = stock.get_market_ticker_name(ticker)
             val = df_sorted.loc[ticker, 'svalue']
             
-            # 최근 2거래일 종가 기반 등락률 계산
             ohlcv = stock.get_market_ohlcv_by_date(start_dt.strftime("%Y%m%d"), tdt, ticker)
             if len(ohlcv) >= 2:
                 close = float(ohlcv['종가'].iloc[-1])
@@ -134,7 +143,6 @@ def fetch_pykrx_market_trend(market="KOSPI", days=30):
         fdt = start_dt.strftime("%Y%m%d")
         tdt = end_dt.strftime("%Y%m%d")
 
-        # 시장 전체 투자자별 일별 순매수 (단위: 백만원으로 환산)
         df = stock.get_market_net_purchases_of_equities_by_date(fdt, tdt, market)
         if df is None or df.empty:
             return pd.DataFrame(), "시장 수급 추이 데이터가 없습니다."
