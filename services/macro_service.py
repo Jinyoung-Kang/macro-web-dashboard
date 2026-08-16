@@ -108,7 +108,7 @@ def get_collected_macro_data():
 
             # 1. 코스피 지수는 LS증권 실시간 API 우선 호출
             if ticker_symbol == "^KS11":
-                ls_kospi = fetch_kospi_index()
+                ls_kospi, _ = fetch_kospi_index()
                 if ls_kospi:
                     curr_price = ls_kospi['price']
                     prev_price = ls_kospi['prev_price']
