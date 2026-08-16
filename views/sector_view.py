@@ -3,22 +3,63 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+from datetime import datetime
 from config import SECTOR_ETFS, ASSET_CLASS_ETFS
 from services.sector_service import calculate_returns_matrix
 
-def highlight_return(val):
+def render_styled_table(df: pd.DataFrame, return_cols: list):
     """
-    수익률 수치에 따라 양수(초록색), 음수(빨간색), 0(회색) 텍스트 색상을 지정합니다.
+    Streamlit DataGrid의 CSS 색상 무시 문제를 해결하기 위해
+    HTML/CSS 기반으로 양수(+% 초록), 음수(-% 빨강)를 렌더링하는 테이블 함수
     """
-    try:
-        num = float(val)
-        if num > 0:
-            return 'color: #10B981; font-weight: 600;'
-        elif num < 0:
-            return 'color: #EF4444; font-weight: 600;'
-        return 'color: #94A3B8;'
-    except (ValueError, TypeError):
-        return ''
+    html = """
+    <div style="overflow-x: auto; margin-top: 10px; margin-bottom: 25px;">
+        <table style="
+            width: 100%; 
+            border-collapse: collapse; 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            font-size: 13.5px; 
+            background: rgba(255, 255, 255, 0.02); 
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+        ">
+            <thead>
+                <tr style="background: rgba(255, 255, 255, 0.06); border-bottom: 1px solid rgba(255, 255, 255, 0.18);">
+    """
+    for col in df.columns:
+        align = "right" if col in return_cols else "left"
+        html += f"<th style='padding: 10px 14px; font-weight: 600; color: #E2E8F0; text-align: {align}; white-space: nowrap;'>{col}</th>"
+    html += "</tr></thead><tbody>"
+
+    for _, row in df.iterrows():
+        html += "<tr style='border-bottom: 1px solid rgba(255, 255, 255, 0.05);'>"
+        for col in df.columns:
+            val = row[col]
+            if col in return_cols:
+                try:
+                    num = float(val)
+                    if num > 0:
+                        color = "#10B981"  # 초록색
+                        weight = "bold"
+                        val_str = f"+{num:.2f}%"
+                    elif num < 0:
+                        color = "#EF4444"  # 빨간색
+                        weight = "bold"
+                        val_str = f"{num:.2f}%"
+                    else:
+                        color = "#94A3B8"  # 회색
+                        weight = "normal"
+                        val_str = f"{num:.2f}%"
+                    html += f"<td style='padding: 9px 14px; text-align: right; color: {color}; font-weight: {weight}; font-family: monospace; font-size: 13.5px; white-space: nowrap;'>{val_str}</td>"
+                except Exception:
+                    html += f"<td style='padding: 9px 14px; text-align: right; color: #E2E8F0;'>{val}</td>"
+            else:
+                bold = "font-weight: 600;" if col in ['티커', '섹터명', '자산군 명칭'] else "color: #94A3B8;"
+                html += f"<td style='padding: 9px 14px; text-align: left; color: #E2E8F0; {bold} white-space: nowrap;'>{val}</td>"
+        html += "</tr>"
+    html += "</tbody></table></div>"
+
+    st.markdown(html, unsafe_allow_html=True)
 
 def render_sector_view():
     st.title("🔄 섹터 & 자산군 로테이션 맵 (Sector Momentum & Rotation)")
@@ -32,12 +73,18 @@ def render_sector_view():
         st.error("섹터 데이터를 불러오는 데 실패했습니다. 잠시 후 다시 시도해주세요.")
         return
 
-    # 기준 거래일 추출
+    # 기준 거래일 추출 (어떤 티커에서든 최근 날짜를 정확히 포착)
     latest_date_str = ""
-    if sector_hist and "SPY" in sector_hist and not sector_hist["SPY"].empty:
-        latest_date_str = sector_hist["SPY"].index[-1].strftime('%Y-%m-%d')
-    elif asset_hist and "SPY" in asset_hist and not asset_hist["SPY"].empty:
-        latest_date_str = asset_hist["SPY"].index[-1].strftime('%Y-%m-%d')
+    for hist_dict in [sector_hist, asset_hist]:
+        if hist_dict:
+            for s in hist_dict.values():
+                if s is not None and not s.empty:
+                    latest_date_str = s.index[-1].strftime('%Y-%m-%d')
+                    break
+        if latest_date_str:
+            break
+    if not latest_date_str:
+        latest_date_str = datetime.now().strftime('%Y-%m-%d')
 
     # 1. 메인 핵심 요약 메트릭
     best_1m = sector_df.sort_values(by="1M", ascending=False).iloc[0]
@@ -52,7 +99,7 @@ def render_sector_view():
     st.divider()
 
     # 2. 탭별 상세 시각화
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3 = tab_objs = st.tabs([
         "📊 11대 섹터 모멘텀 순위",
         "📈 섹터별 누적 수익률 추이",
         "🌐 글로벌 자산군(Asset Class) 로테이션"
@@ -94,18 +141,15 @@ def render_sector_view():
         )
         st.plotly_chart(fig_bar, use_container_width=True)
 
-        st.markdown(f"#### 📋 11대 섹터 기간별 수익률 종합 매트릭스 :gray[(기준일: {latest_date_str})]")
+        # 제목 및 기준일 (회색 글씨 적용)
+        st.markdown(
+            f"#### 📋 11대 섹터 기간별 수익률 종합 매트릭스 <span style='color: #94A3B8; font-size: 14.5px; font-weight: normal;'>(기준일: {latest_date_str})</span>",
+            unsafe_allow_html=True
+        )
+
         disp_df = sector_df[['ticker', 'name', 'type', '1W', '1M', '3M', '6M', '1Y', 'YTD']].copy()
         disp_df.columns = ['티커', '섹터명', '성격', '1주(%)', '1개월(%)', '3개월(%)', '6개월(%)', '1년(%)', 'YTD(%)']
-
-        # 색상 및 서식 적용
-        styled_disp = disp_df.style.format({c: '{:+.2f}%' for c in return_cols})
-        if hasattr(styled_disp, 'map'):
-            styled_disp = styled_disp.map(highlight_return, subset=return_cols)
-        else:
-            styled_disp = styled_disp.applymap(highlight_return, subset=return_cols)
-
-        st.dataframe(styled_disp, use_container_width=True, hide_index=True)
+        render_styled_table(disp_df, return_cols)
 
     # TAB 2: 누적 수익률 추이 비교 차트
     with tab2:
@@ -178,15 +222,12 @@ def render_sector_view():
             )
             st.plotly_chart(fig_asset, use_container_width=True)
 
-            st.markdown(f"#### 📋 자산군별 기간별 수익률표 :gray[(기준일: {latest_date_str})]")
+            # 제목 및 기준일 (회색 글씨 적용)
+            st.markdown(
+                f"#### 📋 자산군별 기간별 수익률표 <span style='color: #94A3B8; font-size: 14.5px; font-weight: normal;'>(기준일: {latest_date_str})</span>",
+                unsafe_allow_html=True
+            )
+
             disp_asset = asset_df[['ticker', 'name', 'type', '1W', '1M', '3M', '6M', '1Y', 'YTD']].copy()
             disp_asset.columns = ['티커', '자산군 명칭', '카테고리', '1주(%)', '1개월(%)', '3개월(%)', '6개월(%)', '1년(%)', 'YTD(%)']
-
-            # 색상 및 서식 적용
-            styled_asset = disp_asset.style.format({c: '{:+.2f}%' for c in return_cols})
-            if hasattr(styled_asset, 'map'):
-                styled_asset = styled_asset.map(highlight_return, subset=return_cols)
-            else:
-                styled_asset = styled_asset.applymap(highlight_return, subset=return_cols)
-
-            st.dataframe(styled_asset, use_container_width=True, hide_index=True)
+            render_styled_table(disp_asset, return_cols)
