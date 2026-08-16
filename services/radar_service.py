@@ -7,17 +7,37 @@ from datetime import datetime, timedelta
 import sys
 
 # ==========================================
-# 🚨 [HOTFIX] pykrx 라이브러리 Python 3.12+ 호환성 패치
-# pkg_resources 모듈이 없는 최신 환경에서 pykrx가 뻗는 것을 방지하기 위해 가짜 모듈을 주입합니다.
+# 🚨 [HOTFIX] pykrx 라이브러리 폰트 및 모듈 에러 원천 차단
+# pykrx 초기화 시 발생하는 pkg_resources 및 폰트 강제 세팅 에러를 완벽히 우회합니다.
 # ==========================================
+# 1. pkg_resources.resource_filename 강제 주입
 try:
     import pkg_resources
+    if not hasattr(pkg_resources, 'resource_filename'):
+        pkg_resources.resource_filename = lambda pkg, res: "dummy.ttf"
 except ImportError:
     import types
     mock_pkg = types.ModuleType('pkg_resources')
     mock_pkg.get_distribution = lambda x: type('MockDist', (object,), {'version': 'unknown'})()
+    mock_pkg.resource_filename = lambda pkg, res: "dummy.ttf"
     sys.modules['pkg_resources'] = mock_pkg
 
+# 2. Matplotlib 폰트 매니저 무력화 (에러 방지)
+try:
+    import matplotlib.font_manager as fm
+    original_font_prop = fm.FontProperties
+    class SafeFontProperties(original_font_prop):
+        def __init__(self, *args, **kwargs):
+            # pykrx가 가짜 경로(dummy.ttf)를 물고 오면 에러 없이 기본 폰트로 우회시킴
+            if 'fname' in kwargs and kwargs['fname'] == 'dummy.ttf':
+                kwargs.pop('fname')
+                kwargs['family'] = 'sans-serif'
+            super().__init__(*args, **kwargs)
+    fm.FontProperties = SafeFontProperties
+except Exception:
+    pass
+
+# 방어벽 구축 후 안전하게 pykrx 임포트
 from pykrx import stock
 from services.ls_service import get_ls_token
 
@@ -28,7 +48,6 @@ LS_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
 # ==========================================
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_investor_top_stocks(market_type="1", investor_type="1", trade_type="1"):
-    """ 당일 장중 실시간 투자자별 매매 상위 50 """
     token, err = get_ls_token()
     if err or not token: 
         return None, f"토큰 오류: {err}"
@@ -71,12 +90,6 @@ def fetch_investor_top_stocks(market_type="1", investor_type="1", trade_type="1"
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_pykrx_period_top_stocks(market="KOSPI", investor="외국인", trade_type="순매수", days=5):
-    """
-    최근 N일간 누적 순매수/순매도 Top 50 종목 집계
-    - market: "KOSPI", "KOSDAQ"
-    - investor: "외국인", "기관합계", "개인"
-    - trade_type: "순매수", "순매도"
-    """
     try:
         end_dt = datetime.now()
         start_dt = end_dt - timedelta(days=days * 2) 
@@ -135,7 +148,6 @@ def fetch_pykrx_period_top_stocks(market="KOSPI", investor="외국인", trade_ty
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_pykrx_market_trend(market="KOSPI", days=30):
-    """ 최근 N거래일 코스피/코스닥 시장 전체 투자자별 일별 순매수 추이 """
     try:
         end_dt = datetime.now()
         start_dt = end_dt - timedelta(days=days * 2)
