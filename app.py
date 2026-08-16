@@ -12,8 +12,8 @@ from views.sec_view import render_sec_view
 from views.consensus_view import render_consensus_view
 from views.sector_view import render_sector_view
 from views.liquidity_view import render_liquidity_view
-from views.ls_test_view import render_ls_test_view
-from views.kis_test_view import render_kis_test_view  # 한국투자증권 뷰 임포트
+#from views.ls_test_view import render_ls_test_view
+#from views.kis_test_view import render_kis_test_view  # 한국투자증권 뷰 임포트
 from views.radar_view import render_radar_view
 
 # SSL 경고 비활성화
@@ -61,9 +61,6 @@ menu_selection = st.sidebar.radio(
         "🔄 섹터 & 자산군 로테이션",
         "📑 기관 13F 포트폴리오 분석", 
         "🎯 기관 13F Money 교집합",
-        "🧪 LS증권 API 테스트",
-        "🧪 한국투자증권 API 테스트",
-        "⚙️ API 시스템 모니터링",
         "📡 외국인/기관 수급 레이더"        
     ],
     index=0
@@ -106,12 +103,6 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     render_sec_view()
 elif menu_selection == "🎯 기관 13F Money 교집합":
     render_consensus_view()
-elif menu_selection == "🧪 LS증권 API 테스트":
-    render_ls_test_view()
-elif menu_selection == "🧪 한국투자증권 API 테스트":
-    render_kis_test_view()
-elif menu_selection == "⚙️ API 시스템 모니터링":
-    render_kis_test_view() 
 elif menu_selection == "📡 외국인/기관 수급 레이더":
     render_radar_view()
    
