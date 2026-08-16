@@ -8,7 +8,7 @@ from services.macro_service import fetch_ticker_data
 from services.sec_service import fetch_sec_13f_multi_quarters, classify_qoq_action
 
 def render_sec_view():
-    st.title("📑 주요 기관들의 포트폴리오 (13F Holdings & QoQ Analysis)")
+    st.title("📑 대가들의 포트폴리오 (13F Holdings & QoQ Analysis)")
     st.caption("SEC EDGAR 공식 공시 데이터 기반 미국 주요 기관 투자자 포트폴리오 분석 & 기간별 비중 추적")
 
     selected_inst_name = st.selectbox("분석할 기관을 선택하세요", options=list(INSTITUTIONS.keys()), index=0)
@@ -52,7 +52,6 @@ def render_sec_view():
         delta_color="off",
         help=f"13F 공시 대상 미국 주식 총 평가액\n원/달러 전일 공식 종가({usdkrw_prev:,.2f}원/$) 기준 환산: {aum_krw_str}"
     )
-    m1.caption(f"💵 원화 환산: **{aum_krw_str}** (전일 종가 {usdkrw_prev:,.1f}원/$)")
     m2.metric("보유 종목 수", f"{meta['total_count']:,} 개")
     m3.metric("Top 10 집중도", f"{meta['top10_weight']:.1f} %", help="상위 10개 종목이 전체 포트폴리오에서 차지하는 비중")
     m4.metric("최신 보고서 기준일 (QoQ)", meta['report_date'], help=f"공시 제출일: {meta['filing_date']}")
@@ -231,7 +230,7 @@ def render_sec_view():
         else:
             st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
 
-    # TAB 4: 상위 종목 비중 순위 (기준 공시일(분기) & 종목 수 선택 가능)
+    # TAB 4: 상위 종목 비중 순위 (기준 날짜(분기) & 종목 수 선택 가능)
     with tab_v4:
         st.markdown("#### ⚙️ 상위 종목 비중 순위 조회 조건 설정")
         col_b1, col_b2 = st.columns([1, 1])
