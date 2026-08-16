@@ -123,40 +123,119 @@ RISK_MODEL_TABLE = {
 }
 
 LIVE_CLOCK_HTML = """
-<div style="
-    display: flex; 
-    flex-wrap: wrap;
-    gap: 15px; 
-    align-items: center; 
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: rgba(255, 255, 255, 0.04); 
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px; 
-    padding: 8px 14px; 
-    color: #e0e0e0;
-    font-size: 13.5px;
-    margin-bottom: 5px;
-">
-    <div style="display: flex; align-items: center; gap: 6px;">
-        <span>🇰🇷 <b>한국 (KST)</b></span>
-        <span id="live-kst" style="font-family: monospace; font-weight: bold; color: #4da3ff; font-size: 14.5px;">--:--:--</span>
-    </div>
-    <div style="color: rgba(255, 255, 255, 0.25);">|</div>
-    <div style="display: flex; align-items: center; gap: 6px;">
-        <span>🗽 <b>뉴욕 (EST/EDT)</b></span>
-        <span id="live-ny" style="font-family: monospace; font-weight: bold; color: #ffb74d; font-size: 14.5px;">--:--:--</span>
-    </div>
-</div>
-<script>
-function updateLiveClocks() {
-    const now = new Date();
-    const optKST = { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-    const optNY = { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+    /* 기본 리셋 및 다크 테마 폰트 설정 */
+    body {
+        margin: 0;
+        padding: 0;
+        background-color: transparent;
+        color: #E2E8F0;
+        font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+        height: 100vh;
+    }
     
-    document.getElementById('live-kst').innerText = new Intl.DateTimeFormat('ko-KR', optKST).format(now);
-    document.getElementById('live-ny').innerText = new Intl.DateTimeFormat('ko-KR', optNY).format(now);
-}
-updateLiveClocks();
-setInterval(updateLiveClocks, 1000);
-</script>
+    /* 시계 컨테이너 모던 UI */
+    .clock-container {
+        display: flex;
+        gap: 24px;
+        background: rgba(30, 41, 59, 0.6);
+        padding: 8px 18px;
+        border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* 시장 상태 뱃지 공통 스타일 */
+    .market-badge {
+        margin-left: 10px;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        display: inline-block;
+    }
+    
+    /* 상태별 테마 컬러 */
+    .status-trading { background: rgba(16, 185, 129, 0.15); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.4); } /* 거래 중 (녹색) */
+    .status-pre     { background: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); } /* 장 전 (주황색) */
+    .status-post    { background: rgba(139, 92, 246, 0.15); color: #8B5CF6; border: 1px solid rgba(139, 92, 246, 0.4); } /* 장 후 (보라색) */
+    .status-closed  { background: rgba(107, 114, 128, 0.15); color: #9CA3AF; border: 1px solid rgba(107, 114, 128, 0.4); } /* 휴장/장마감 (회색) */
+</style>
+</head>
+<body>
+    <div class="clock-container">
+        <div id="kst-clock">🇰🇷 한국 (KOSPI) <span id="kst-time" style="margin-left:6px; font-variant-numeric: tabular-nums;"></span> <span id="kst-status" class="market-badge"></span></div>
+        <div id="est-clock" style="margin-left: 10px;">🗽 뉴욕 (NASDAQ) <span id="est-time" style="margin-left:6px; font-variant-numeric: tabular-nums;"></span> <span id="est-status" class="market-badge"></span></div>
+    </div>
+
+    <script>
+        // 타임존 기반 시장 상태 판별 로직
+        function getMarketStatus(timeZone, type) {
+            const now = new Date();
+            const options = { timeZone: timeZone, weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false };
+            const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(now);
+            
+            const weekday = parts.find(p => p.type === 'weekday').value;
+            let hour = parseInt(parts.find(p => p.type === 'hour').value);
+            const minute = parseInt(parts.find(p => p.type === 'minute').value);
+            
+            if (hour === 24) hour = 0; // 자정 처리
+            const timeNum = hour * 100 + minute; // HHMM 형태의 숫자로 변환 (예: 9시 30분 -> 930)
+
+            // 1. 주말 휴장 처리
+            if (weekday === 'Sat' || weekday === 'Sun') {
+                return { text: "휴장", className: "status-closed" };
+            }
+
+            // 2. KOSPI (한국 시간 기준)
+            if (type === 'KOSPI') {
+                if (timeNum >= 900 && timeNum < 1530) return { text: "거래 중", className: "status-trading" };
+                if (timeNum >= 800 && timeNum < 900)  return { text: "장 전", className: "status-pre" };
+                if (timeNum >= 1530 && timeNum <= 1800) return { text: "장 후", className: "status-post" };
+                return { text: "장 마감", className: "status-closed" };
+            } 
+            // 3. NASDAQ (미국 동부 시간 기준)
+            else {
+                if (timeNum >= 930 && timeNum < 1600) return { text: "거래 중", className: "status-trading" };
+                if (timeNum >= 400 && timeNum < 930)  return { text: "장 전", className: "status-pre" };
+                if (timeNum >= 1600 && timeNum <= 2000) return { text: "장 후", className: "status-post" };
+                return { text: "장 마감", className: "status-closed" };
+            }
+        }
+
+        // 실시간 시계 및 뱃지 렌더링
+        function updateTime() {
+            const now = new Date();
+            
+            const kstOptions = { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            const estOptions = { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            
+            document.getElementById('kst-time').innerHTML = `<b>${new Intl.DateTimeFormat('ko-KR', kstOptions).format(now)}</b>`;
+            document.getElementById('est-time').innerHTML = `<b>${new Intl.DateTimeFormat('ko-KR', estOptions).format(now)}</b>`;
+
+            // 한국 시장 상태 업데이트
+            const kstStatus = getMarketStatus('Asia/Seoul', 'KOSPI');
+            const kstBadge = document.getElementById('kst-status');
+            kstBadge.innerText = kstStatus.text;
+            kstBadge.className = "market-badge " + kstStatus.className;
+
+            // 미국 시장 상태 업데이트
+            const estStatus = getMarketStatus('America/New_York', 'NASDAQ');
+            const estBadge = document.getElementById('est-status');
+            estBadge.innerText = estStatus.text;
+            estBadge.className = "market-badge " + estStatus.className;
+        }
+
+        setInterval(updateTime, 1000);
+        updateTime(); // 스크립트 로드 시 즉시 1회 실행
+    </script>
+</body>
+</html>
 """
