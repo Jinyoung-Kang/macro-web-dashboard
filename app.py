@@ -14,6 +14,7 @@ from views.sector_view import render_sector_view
 from views.liquidity_view import render_liquidity_view
 from views.ls_test_view import render_ls_test_view
 from views.kis_test_view import render_kis_test_view  # 한국투자증권 뷰 임포트
+from views.radar_view import render_radar_view
 
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
