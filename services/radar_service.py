@@ -48,10 +48,23 @@ def fetch_investor_top_stocks(market_type="1", investor_type="1", trade_type="1"
             
             if out_block:
                 df = pd.DataFrame(out_block)
-                # 데이터 타입 전처리 (문자열 -> 숫자 변환)
-                df['svalue'] = pd.to_numeric(df['svalue'], errors='coerce') # 순매수 금액
-                df['price'] = pd.to_numeric(df['price'], errors='coerce')   # 현재가
-                df['diff'] = pd.to_numeric(df['diff'], errors='coerce')     # 등락률
+                
+                # API 실제 응답 필드명에 맞게 매핑 ('value' 가 순매수금액)
+                if 'value' in df.columns:
+                    df['svalue'] = pd.to_numeric(df['value'], errors='coerce')
+                else:
+                    df['svalue'] = 0.0
+                    
+                if 'price' in df.columns:
+                    df['price'] = pd.to_numeric(df['price'], errors='coerce')
+                else:
+                    df['price'] = 0.0
+                    
+                if 'diff' in df.columns:
+                    df['diff'] = pd.to_numeric(df['diff'], errors='coerce')
+                else:
+                    df['diff'] = 0.0
+                
                 return df, None
             else:
                 return pd.DataFrame(), "수급 조건에 부합하는 데이터가 없습니다."
