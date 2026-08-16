@@ -7,8 +7,8 @@ from services.kiwoom_service import (
 )
 
 def render_kiwoom_test_view():
-    st.title("🧪 키움증권 REST API 연동 테스트")
-    st.caption("발급받은 실전투자 APP Key 및 Secret Key를 기반으로 토큰 발급, 실시간 코스피 지수, 개별 주식 조회를 검증합니다.")
+    st.title("🧪 타증권사 REST API 연동 테스트")
+    st.caption("발급받은 APP Key 및 Secret Key를 기반으로 토큰 발급 상태를 검증합니다.")
 
     # 1. 토큰 발급 상태 검증 섹션
     st.subheader("1. OAuth 2.0 인증 토큰 발급 테스트")
@@ -19,21 +19,25 @@ def render_kiwoom_test_view():
             st.cache_data.clear()
             st.rerun()
 
-    with st.spinner("키움증권 인증 서버와 통신 중..."):
+    with st.spinner("인증 서버와 통신 중..."):
         token, token_err = get_kiwoom_token()
 
     if token_err:
         st.error(f"❌ **인증 실패:** {token_err}")
-        st.info("💡 `secrets.toml`에 `[kiwoom_api]` app_key와 app_secret이 올바르게 설정되었는지 확인하세요.", icon="ℹ️")
+        st.info("💡 API 엔드포인트(URL)가 실제로 존재하는지, 타 증권사(예: 한국투자증권)의 키가 아닌지 다시 한번 확인해주세요.", icon="ℹ️")
+        return
+    elif not token:
+        # 예기치 않게 token이 None으로 넘어오는 엣지 케이스 방어
+        st.error("❌ **인증 실패:** 응답 토큰 값이 존재하지 않습니다.")
         return
     else:
-        st.success("✅ **키움증권 OAuth 2.0 인증 성공!**")
+        st.success("✅ **OAuth 2.0 인증 성공!**")
         with st.expander("🔑 발급된 토큰 정보 (보안 마스킹)"):
             st.code(f"{token[:12]}...{token[-8:]}", language="text")
 
     st.divider()
 
-    # 2. 코스피 실시간 지수 TR 테스트 (LS에서 실패했던 지수 데이터)
+    # 2. 코스피 실시간 지수 TR 조회 테스트
     st.subheader("2. 코스피 실시간 지수 TR 조회 테스트")
     with st.spinner("코스피 실시간 지수 수신 중..."):
         kospi_data, kospi_err = fetch_kiwoom_kospi_index()
