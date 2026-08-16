@@ -67,6 +67,22 @@ def fetch_stock_quote(shcode: str = "005930"):
             out_block = result.get("t1102OutBlock", {})
             if not out_block or not out_block.get("hname"):
                 return None, f"종목 정보를 찾을 수 없습니다. (응답: {result})"
+            
+            # 하락/상승 부호 완벽 처리
+            raw_change = float(out_block.get("change", 0))
+            raw_diff = float(out_block.get("diff", 0))
+            sign = str(out_block.get("sign", "3"))
+
+            if sign in ["4", "5"]:  # 하락/하한
+                out_block['change'] = -abs(raw_change)
+                out_block['diff'] = -abs(raw_diff)
+            elif sign in ["1", "2"]:  # 상승/상한
+                out_block['change'] = abs(raw_change)
+                out_block['diff'] = abs(raw_diff)
+            else:
+                out_block['change'] = 0.0
+                out_block['diff'] = 0.0
+
             return out_block, None
         else:
             return None, f"시세 조회 실패 (HTTP {resp.status_code}): {resp.text}"
@@ -76,64 +92,21 @@ def fetch_stock_quote(shcode: str = "005930"):
 @st.cache_data(ttl=15, show_spinner=False)
 def fetch_kospi_index():
     """
-    LS증권 업종전체(TR: t8424)를 호출하여 코스피 실시간 지수 데이터를 반환합니다.
-    REST API에서 지원하지 않는 t1511 대신 안정적인 t8424를 사용합니다.
+    지수 전용 TR 미지원 에러(IGW00215)를 우회하기 위해,
+    한국 증시를 대표하는 'KODEX 200 (069500)' ETF의 실시간 시세를 조회하여 등락률 프록시로 활용합니다.
     """
-    token, err = get_ls_token()
-    if err or not token:
-        return None, f"토큰 오류: {err}"
+    data, err = fetch_stock_quote("069500")
+    if err or not data:
+        return None, f"프록시 ETF 통신 실패: {err}"
 
-    url = f"{BASE_URL}/stock/sector"
-    headers = {
-        "Content-Type": "application/json; charset=utf-8",
-        "authorization": f"Bearer {token}",
-        "tr_cd": "t8424",
-        "tr_cont": "N",
-        "tr_cont_key": ""
-    }
-    payload = {
-        "t8424InBlock": {
-            "gubun1": "1"  # 1: 코스피 시장 전체 업종 조회
-        }
-    }
-
-    try:
-        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=8)
-        if resp.status_code == 200:
-            res_json = resp.json()
-            out_block = res_json.get("t8424OutBlock", [])
-            
-            # 리스트 응답 중 코스피 종합지수(업종코드 "001") 추출
-            for item in out_block:
-                if item.get("upcode") == "001":
-                    price = float(item.get("pricejisu", 0))
-                    raw_change = float(item.get("change", 0))
-                    raw_diff = float(item.get("diff", 0))
-                    sign = str(item.get("sign", "3"))
-
-                    # 하락/하한 부호 처리
-                    if sign in ["4", "5"]:
-                        diff = -abs(raw_change)
-                        rate = -abs(raw_diff)
-                    # 상승/상한 부호 처리
-                    elif sign in ["1", "2"]:
-                        diff = abs(raw_change)
-                        rate = abs(raw_diff)
-                    else: # 보합
-                        diff = 0.0
-                        rate = 0.0
-
-                    prev_price = price - diff
-                    return {
-                        "price": price,
-                        "prev_price": prev_price,
-                        "diff": diff,
-                        "rate": rate,
-                        "hname": "코스피 종합"
-                    }, None
-            
-            return None, "응답 데이터에서 코스피 종합지수(001)를 찾을 수 없습니다."
-        else:
-            return None, f"HTTP 요청 실패 (코드 {resp.status_code}): {resp.text}"
-    except Exception as e:
-        return None, f"통신 예외: {str(e)}"
+    price = float(data.get("price", 0))
+    diff = float(data.get("change", 0))
+    rate = float(data.get("diff", 0))
+    
+    return {
+        "price": price,
+        "prev_price": price - diff,
+        "diff": diff,
+        "rate": rate,
+        "hname": "코스피 200 (KODEX ETF 프록시)"
+    }, None
