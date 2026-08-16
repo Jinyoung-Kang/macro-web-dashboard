@@ -24,7 +24,8 @@ def fetch_investor_top_stocks(market_type="1", investor_type="1", trade_type="1"
     headers = {"Content-Type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "tr_cd": "t1664", "tr_cont": "N", "tr_cont_key": ""}
     payload = {
         "t1664InBlock": {
-            "mgubun": market_type, "vagubun": "1", "bdgubun": trade_type, "cdgubun": investor_type, "cnt": 50
+            "mgubun": market_type, "vagubun": "1", "bdgubun": trade_type, "cdgubun": investor_type, 
+            "cnt": 50 # t1664는 cnt 허용
         }
     }
 
@@ -55,10 +56,12 @@ def fetch_period_investor_top_stocks(market_type="1", investor_type="1", trade_t
 
     url = f"{LS_BASE_URL}/stock/investor"
     headers = {"Content-Type": "application/json; charset=utf-8", "authorization": f"Bearer {token}", "tr_cd": "t1665", "tr_cont": "N", "tr_cont_key": ""}
+    
+    # 🚨 FIX: HTTP 500 원인이었던 'cnt' 파라미터 삭제 (서버에서 미지원)
     payload = {
         "t1665InBlock": {
             "mgubun": market_type, "vagubun": "1", "bdgubun": trade_type, "cdgubun": investor_type,
-            "fdt": fdt, "tdt": tdt, "cnt": 50
+            "fdt": fdt, "tdt": tdt
         }
     }
 
@@ -71,9 +74,12 @@ def fetch_period_investor_top_stocks(market_type="1", investor_type="1", trade_t
                 df['svalue'] = pd.to_numeric(df.get('value', df.get('svalue', 0)), errors='coerce')
                 df['price'] = pd.to_numeric(df.get('price', 0), errors='coerce')
                 df['diff'] = pd.to_numeric(df.get('diff', 0), errors='coerce')
+                
+                # API단에서 cnt를 지원하지 않으므로, Pandas 연산 후 상위 50개만 슬라이싱
+                df = df.head(50)
                 return df, None
             return pd.DataFrame(), "해당 기간의 수급 데이터가 없습니다."
-        return None, f"API 호출 실패 (HTTP {resp.status_code})"
+        return None, f"API 호출 실패 (HTTP {resp.status_code}): {resp.text}"
     except Exception as e: return None, f"통신 예외: {str(e)}"
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -99,13 +105,22 @@ def fetch_market_investor_trend(market_type="1"):
             out_block = resp.json().get("t1615OutBlock1", [])
             if out_block:
                 df = pd.DataFrame(out_block)
-                # API 명세상 sv_08(외인), sv_17(기관종합), sv_14(개인). 백만원 단위.
-                df['date'] = pd.to_datetime(df['date1'], format='%Y%m%d', errors='coerce')
-                df['foreign'] = df['sv_08'].apply(_safe_float)
-                df['inst'] = df['sv_17'].apply(_safe_float)
-                df['retail'] = df['sv_14'].apply(_safe_float)
                 
-                df = df.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
+                # 🚨 FIX: API 응답에 따라 date 필드를 동적 매핑 (KeyError 방지)
+                date_col = 'date' if 'date' in df.columns else ('date1' if 'date1' in df.columns else None)
+                if not date_col:
+                    return pd.DataFrame(), "응답에 날짜 필드가 누락되었습니다."
+
+                df['date_dt'] = pd.to_datetime(df[date_col], format='%Y%m%d', errors='coerce')
+                
+                # .get()을 활용해 혹시 모를 특정 주체 누락(KeyError) 완벽 방어
+                df['foreign'] = df.get('sv_08', 0).apply(_safe_float)
+                df['inst'] = df.get('sv_17', 0).apply(_safe_float)
+                df['retail'] = df.get('sv_14', 0).apply(_safe_float)
+                
+                df = df.dropna(subset=['date_dt']).sort_values('date_dt').reset_index(drop=True)
+                df['date'] = df['date_dt'] # 뷰와의 호환성을 위해 date 컬럼 복원
+                
                 return df[['date', 'foreign', 'inst', 'retail']], None
             return pd.DataFrame(), "수급 추이 데이터가 없습니다."
         return None, f"API 호출 실패 (HTTP {resp.status_code})"
