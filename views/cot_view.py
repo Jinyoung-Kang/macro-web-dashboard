@@ -16,21 +16,22 @@ ASSET_CODES = {
 
 def render_cot_view():
     st.title("🏛️ 글로벌 스마트머니 (CFTC COT)")
-    st.caption("헤지펀드 및 대형 투기자본(Non-Commercial)의 시장별 롱/숏 포지셔닝을 추적하여 글로벌 거시 트렌드의 극단값(과열/침체)을 분석합니다.")
+    st.caption("헤지펀드 및 대형 투기자본의 시장별 롱/숏 포지셔닝을 추적하여 글로벌 거시 트렌드의 극단값(과열/침체)을 분석합니다.")
     st.divider()
 
-    # 상단 컨트롤 패널
+    # ==========================================
+    # 상단: 컨트롤 패널
+    # ==========================================
     c1, c2 = st.columns([2, 1])
     with c1:
         selected_asset = st.selectbox("조회할 기초 자산 선택", list(ASSET_CODES.keys()), index=0)
     with c2:
-        period_str = st.selectbox("조회 기간", ["최근 1년", "최근 3년", "최근 5년"], index=1)
+        period_str = st.selectbox("조회 기간 설정", ["최근 1년", "최근 3년", "최근 5년", "최근 10년"], index=1)
         
-    # 기간 설정 (1년 = 약 52주)
-    limit_map = {"최근 1년": 52, "최근 3년": 156, "최근 5년": 260}
+    limit_map = {"최근 1년": 52, "최근 3년": 156, "최근 5년": 260, "최근 10년": 520}
     weeks_to_fetch = limit_map[period_str]
 
-    with st.spinner(f"{selected_asset}의 COT 데이터를 불러오는 중..."):
+    with st.spinner(f"{selected_asset}의 COT 주체별 데이터를 불러오는 중..."):
         df, err = fetch_cftc_cot_legacy(ASSET_CODES[selected_asset], limit=weeks_to_fetch)
 
     if err:
@@ -40,74 +41,98 @@ def render_cot_view():
         st.warning("데이터가 존재하지 않습니다.")
         return
 
-    # 데이터 연산: 최신 기준일 및 증감 계산
+    # 데이터 추출 (최근 기준일)
     latest_date = df['date'].iloc[0]
-    prev_date = df['date'].iloc[1] if len(df) > 1 else latest_date
     
-    curr_net = df['net_position'].iloc[0]
-    prev_net = df['net_position'].iloc[1] if len(df) > 1 else curr_net
-    wow_change = curr_net - prev_net
+    nc_net = df['nc_net'].iloc[0]
+    comm_net = df['comm_net'].iloc[0]
+    nr_net = df['nr_net'].iloc[0]
     
-    max_net = df['net_position'].max()
-    min_net = df['net_position'].min()
-    
-    # COT Index 계산 (0 ~ 100%)
-    if max_net - min_net == 0:
-        cot_index = 50.0
-    else:
-        cot_index = ((curr_net - min_net) / (max_net - min_net)) * 100
+    nc_net_prev = df['nc_net'].iloc[1] if len(df) > 1 else nc_net
+    nc_wow = nc_net - nc_net_prev
 
-    # 1. 핵심 지표 & 기준 날짜 대시보드
-    st.markdown("### 📌 현재 포지션 요약")
-    st.info(f"📅 **데이터 기준일(Report Date):** `{latest_date.strftime('%Y년 %m월 %d일')}` (매주 금요일 발표, 화요일 장마감 기준 집계)")
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("투기세력 순포지션 (Net)", f"{curr_net:,.0f} 계약", f"{wow_change:+,.0f} 계약 (WoW)")
-    col2.metric("롱 (Long / 매수)", f"{df['long'].iloc[0]:,.0f} 계약", f"{df['long'].iloc[0] - df['long'].iloc[1]:+,.0f} 계약")
-    col3.metric("숏 (Short / 매도)", f"{df['short'].iloc[0]:,.0f} 계약", f"{- (df['short'].iloc[0] - df['short'].iloc[1]):+,.0f} 계약", delta_color="inverse")
+    # COT Index 계산 (투기세력 nc_net 기준)
+    max_net = df['nc_net'].max()
+    min_net = df['nc_net'].min()
+    cot_index = 50.0 if max_net == min_net else ((nc_net - min_net) / (max_net - min_net)) * 100
 
-    st.write("")
-
-    # 2. 해석 및 가이드
-    st.markdown("### 💡 데이터 해석 가이드")
-    with st.expander("COT Index 기반 역발상 투자 시그널 (클릭하여 펼치기)", expanded=True):
-        st.markdown(f"**현재 {selected_asset}의 COT Index:** `{cot_index:.1f}%`")
-        st.progress(int(cot_index))
+    # ==========================================
+    # 섹션 1: 그룹별 설명 가이드 (해석)
+    # ==========================================
+    with st.expander("📚 COT 보고서 '투자자 주체별' 완벽 해석 가이드", expanded=False):
         st.markdown("""
-        * **COT Index란?** 선택한 기간 내 최고/최저치 대비 현재 순포지션의 상대적 위치를 나타냅니다.
-        * 🔴 **과열 구간 (80% 이상):** 투기 자본이 극단적인 매수(Long) 상태입니다. 더 이상 살 사람이 없어 **하락 반전(조정)**될 위험이 높습니다.
-        * 🔵 **침체 구간 (20% 이하):** 투기 자본이 극단적인 매도(Short) 상태입니다. 매도 물량이 소진되어 숏커버링(Short Squeeze)에 의한 **상승 반전** 가능성이 큽니다.
+        **CFTC COT 보고서는 파생상품 시장 참여자를 3가지 주체로 분류합니다.**
+        
+        * 🦈 **스마트머니 (Non-Commercial / 투기세력):** 헤지펀드, CTA 등 오직 '수익 창출'이 목적인 자본입니다. **시장의 추세를 주도**하며, 이들의 순포지션이 극단적인 쏠림(COT Index 80% 이상 또는 20% 이하)을 보일 때 강력한 추세 반전 시그널로 해석합니다.
+        * 🛡️ **상업적 헷저 (Commercial / 실수요자):** 농부, 원유 생산업체, 대형 은행 등 실물 자산 가격 변동의 '위험 방어(Hedge)'가 목적인 자본입니다. 시장 가격 흐름과 **정반대(역방향)**로 움직이는 경향이 뚜렷합니다.
+        * 🐜 **소액 투자자 (Non-Reportable / 개인):** 보고 의무 기준에 미치지 못하는 소규모 투기자입니다. 통상적으로 시장의 꼭지와 바닥에서 늦게 반응하는 **후행 지표(개미)**로 분석됩니다.
         """)
 
-    # 3. 메인 시계열 차트
-    st.markdown("### 📊 투기세력 순포지션 추이")
+    # ==========================================
+    # 섹션 2: 현재 기준 포지션 요약
+    # ==========================================
+    st.info(f"📅 **최신 데이터 기준일:** `{latest_date.strftime('%Y년 %m월 %d일')}` (매주 금요일 발표, 해당 주 화요일 장 마감 집계)")
     
-    fig = go.Figure()
-    # 순포지션을 막대그래프로 (양수: Blue, 음수: Red)
-    colors = ['#EF4444' if val < 0 else '#3B82F6' for val in df['net_position']]
-    fig.add_trace(go.Bar(
-        x=df['date'], y=df['net_position'], 
-        name="Net Position", 
-        marker_color=colors,
-        hovertemplate="%{x|%Y-%m-%d}<br>Net: %{y:,.0f}<extra></extra>"
-    ))
-    
-    fig.update_layout(
-        height=450,
-        hovermode="x unified",
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis_title="발표 일자",
-        yaxis_title="순포지션 계약 수"
-    )
-    # 기준선(Zero Line)
-    fig.update_yaxes(zeroline=True, zerolinewidth=2, zerolinecolor='gray')
-    st.plotly_chart(fig, use_container_width=True)
+    st.markdown("#### 📌 주체별 최신 순포지션 (Net Position)")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("🦈 스마트머니 (투기세력)", f"{nc_net:,.0f} 계약", f"{nc_wow:+,.0f} 계약 (WoW)")
+    c2.metric("🛡️ 상업적 헷저 (실수요자)", f"{comm_net:,.0f} 계약", f"{(comm_net - (df['comm_net'].iloc[1] if len(df)>1 else comm_net)):+,.0f} 계약", delta_color="off")
+    c3.metric("🐜 소액 투자자 (개인)", f"{nr_net:,.0f} 계약", f"{(nr_net - (df['nr_net'].iloc[1] if len(df)>1 else nr_net)):+,.0f} 계약", delta_color="off")
 
-    # 4. 상세 원본 데이터
-    st.markdown(f"##### 📋 주간 포지션 원본 데이터 ({period_str})")
-    disp_df = df.copy()
+    st.write("")
+    
+    # COT Index 과열도 바
+    st.markdown("#### 🚨 스마트머니 과열도 (COT Index)")
+    st.markdown(f"**현재 시장 위치:** `{'🔴 매수 과열 (조정 임박)' if cot_index >= 80 else '🔵 매도 과열 (반등 임박)' if cot_index <= 20 else '🟢 중립 구간'} (COT Index: {cot_index:.1f}%)`")
+    st.progress(int(cot_index))
+
+    st.divider()
+
+    # ==========================================
+    # 섹션 3: 그룹별 차트 시각화
+    # ==========================================
+    tab1, tab2 = st.tabs(["📈 3대 주체 순포지션 시계열 비교", "📊 스마트머니(투기세력) 쏠림 심층 분석"])
+    
+    # 탭 1: 세 그룹 라인 차트 비교
+    with tab1:
+        st.caption(f"{period_str} 간 투기세력(스마트머니)과 상업세력(헷저)의 역의 상관관계를 확인하세요.")
+        fig_multi = go.Figure()
+        fig_multi.add_trace(go.Scatter(x=df['date'], y=df['nc_net'], mode='lines', name='스마트머니(투기세력)', line=dict(color='#3B82F6', width=2.5)))
+        fig_multi.add_trace(go.Scatter(x=df['date'], y=df['comm_net'], mode='lines', name='헷지세력(상업적)', line=dict(color='#F97316', width=2.5)))
+        fig_multi.add_trace(go.Scatter(x=df['date'], y=df['nr_net'], mode='lines', name='소액투자자(개미)', line=dict(color='#10B981', width=2.5)))
+        
+        fig_multi.update_layout(
+            height=450, hovermode='x unified',
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=10, r=10, t=10, b=10)
+        )
+        fig_multi.update_yaxes(title_text="순포지션 계약 수", zeroline=True, zerolinewidth=1.5, zerolinecolor='rgba(255,255,255,0.4)')
+        st.plotly_chart(fig_multi, use_container_width=True)
+
+    # 탭 2: 투기세력 바 차트
+    with tab2:
+        st.caption(f"오직 스마트머니의 수급 방향에만 집중합니다. (파란 막대: 매수 우위 / 빨간 막대: 매도 우위)")
+        fig_nc = go.Figure()
+        colors = ['#EF4444' if val < 0 else '#3B82F6' for val in df['nc_net']]
+        fig_nc.add_trace(go.Bar(
+            x=df['date'], y=df['nc_net'], 
+            name="투기세력 Net Position", 
+            marker_color=colors
+        ))
+        
+        fig_nc.update_layout(height=450, margin=dict(l=10, r=10, t=10, b=10))
+        fig_nc.update_yaxes(title_text="순포지션 계약 수", zeroline=True, zerolinewidth=1.5, zerolinecolor='rgba(255,255,255,0.4)')
+        st.plotly_chart(fig_nc, use_container_width=True)
+
+    # ==========================================
+    # 섹션 4: 상세 테이블
+    # ==========================================
+    st.markdown(f"##### 📋 주간 주체별 순포지션 상세 데이터 ({period_str})")
+    disp_df = df[['date', 'nc_net', 'comm_net', 'nr_net']].copy()
     disp_df['date'] = disp_df['date'].dt.strftime('%Y-%m-%d')
-    disp_df.columns = ['발표일자', '롱(매수) 계약', '숏(매도) 계약', '순포지션(Net)']
+    disp_df.columns = ['발표일자 (기준일)', '스마트머니 순포지션', '헷지세력 순포지션', '소액투자자 순포지션']
+    
     for c in disp_df.columns[1:]:
         disp_df[c] = disp_df[c].map('{:,.0f}'.format)
+        
     st.dataframe(disp_df, use_container_width=True, hide_index=True)
