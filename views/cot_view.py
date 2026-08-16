@@ -77,8 +77,8 @@ def render_cot_view():
     st.markdown(f"#### 📌 [{selected_asset}] 주체별 최신 순포지션")
     
     c1, c2, c3 = st.columns(3)
-    c1.metric("🦈 스마트머니 (투기세력)", f"{nc_net:,.0f} 계약", f"{nc_wow:+,.0f} 계약 (WoW)")
-    c2.metric("🛡️ 상업적 헷저 (실수요자)", f"{comm_net:,.0f} 계약", f"{(comm_net - (df['comm_net'].iloc[1] if len(df)>1 else comm_net)):+,.0f} 계약", delta_color="off")
+    c1.metric("🦈 투기세력 (스마트머니)", f"{nc_net:,.0f} 계약", f"{nc_wow:+,.0f} 계약 (WoW)")
+    c2.metric("🛡️ 실수요자 (상업적 헷저)", f"{comm_net:,.0f} 계약", f"{(comm_net - (df['comm_net'].iloc[1] if len(df)>1 else comm_net)):+,.0f} 계약", delta_color="off")
     c3.metric("🐜 소액 투자자 (개인)", f"{nr_net:,.0f} 계약", f"{(nr_net - (df['nr_net'].iloc[1] if len(df)>1 else nr_net)):+,.0f} 계약", delta_color="off")
 
     st.write("")
