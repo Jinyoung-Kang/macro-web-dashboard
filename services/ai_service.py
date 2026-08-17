@@ -76,32 +76,51 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
         latency = int((time.time() - start_time) * 1000)
         return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
-def translate_to_korean_via_nvidia(text: str, nv_key: str) -> str:
-    """영어 응답을 NVIDIA NIM을 통해 자연스러운 한국어로 번역"""
-    if not nv_key or not text:
-        return text
+# ==========================================
+# 헬퍼 함수: 영어 텍스트를 Cloudflare m2m100-1.2b로 한글 번역
+# ==========================================
+def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: str) -> tuple[str, str]:
+    """Cloudflare의 전용 번역 모델을 이용해 영어 텍스트를 한국어로 변환"""
+    if not account_id or not api_token or not text:
+        return text, "🔴 번역 불가 (인증키 누락)"
+
+    model = "@cf/meta/m2m100-1.2b"
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
+    headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
-    translate_prompt = (
-        "다음 금융 분석 텍스트를 핵심 맥락을 살려 자연스럽고 간결한 한국어로 번역해줘. "
-        "다른 설명 없이 번역된 결과만 출력해:\n\n"
-        f"{text}"
-    )
-    trans_res = _call_openai_format("NVIDIA NIM", "https://integrate.api.nvidia.com/v1/chat/completions", nv_key, "meta/llama-3.1-8b-instruct", translate_prompt, timeout=25)
-    if trans_res["status"]:
-        return trans_res["response"].strip()
-    return text
+    # Cloudflare Translation API 규격
+    payload = {
+        "text": text,
+        "source_lang": "english",
+        "target_lang": "korean"
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("success"):
+                translated_text = data["result"]["translated_text"]
+                return translated_text, "🟢 m2m100 모델 한글 자동번역 완료"
+            else:
+                return text, f"🔴 번역 API 실패: {data.get('errors')}"
+        else:
+            return text, f"🔴 번역 HTTP 에러: {resp.status_code}"
+    except Exception as e:
+        return text, f"🔴 번역 통신 에러: {str(e)}"
 
 # ==========================================
 # 개별 API 테스트 함수 (4개 모델)
 # ==========================================
-def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, nv_key: str = "") -> dict:
+def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
+    """1순위: Cloudflare Workers AI (DeepSeek-R1-32B) + m2m100 한글 번역 보정"""
     model = "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
     if not account_id or not api_token:
         return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
 
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
-    payload = {"messages": [{"role": "user", "content": f"반드시 한국어로 명확하게 답변해줘: {prompt}"}]}
+    payload = {"messages": [{"role": "user", "content": f"반드시 한국어로 요약해줘: {prompt}"}]}
     
     start_time = time.time()
     try:
@@ -112,14 +131,25 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, nv_key: str
             data = resp.json()
             if data.get("success"):
                 raw = data["result"]["response"]
+                
+                # 1) DeepSeek의 <think> 사고 과정 태그 제거
                 cleaned = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
                 if not cleaned:
                     cleaned = raw.strip()
                 
-                if len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15 and nv_key:
-                    cleaned = translate_to_korean_via_nvidia(cleaned, nv_key)
+                # 2) 한글 포함 여부 확인 및 필요 시 Cloudflare m2m100 번역 모델 호출
+                translation_info = "⚪ 번역 생략 (한글 출력 확인됨)"
+                if len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15:
+                    cleaned, translation_info = translate_to_korean_via_cloudflare(cleaned, account_id, api_token)
 
-                return {"status": True, "provider": "Cloudflare Workers AI", "model": model, "latency_ms": latency, "response": cleaned}
+                return {
+                    "status": True, 
+                    "provider": "Cloudflare Workers AI", 
+                    "model": model, 
+                    "latency_ms": latency, 
+                    "response": cleaned,
+                    "translation_info": translation_info
+                }
             else:
                 return {"status": False, "provider": "Cloudflare Workers AI", "model": model, "latency_ms": latency, "response": f"API Error: {data.get('errors')}"}
         else:
@@ -144,12 +174,6 @@ def test_cerebras(api_key: str, prompt: str) -> dict:
 # 4단 Failover 무중단 AI 브리핑 생성 파이프라인
 # ==========================================
 def generate_ai_briefing_with_failover(prompt: str) -> dict:
-    """
-    1순위: Cloudflare AI (DeepSeek-R1-32B)
-    2순위: NVIDIA Nemotron-3 Super 120B
-    3순위: NVIDIA GPT-OSS-20B
-    4순위: Cerebras Cloud
-    """
     cf_id = get_secret("ai.cloudflare_account_id", "")
     cf_token = get_secret("ai.cloudflare_api_token", "")
     nv_key = get_secret("ai.nvidia_api_key", "")
@@ -157,9 +181,10 @@ def generate_ai_briefing_with_failover(prompt: str) -> dict:
 
     # 1순위
     if cf_id and cf_token:
-        res = test_cloudflare_ai(cf_id, cf_token, prompt, nv_key=nv_key)
+        res = test_cloudflare_ai(cf_id, cf_token, prompt)
         if res["status"]:
-            res["pipeline_step"] = "1순위 (Cloudflare AI) 정상 응답"
+            trans_msg = res.get("translation_info", "번역 상태 없음")
+            res["pipeline_step"] = f"1순위 (Cloudflare AI) 정상 응답 [{trans_msg}]"
             return res
 
     # 2순위
