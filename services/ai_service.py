@@ -88,9 +88,10 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
+    # 번역 프롬프트 강화: 한자 제거 명시
     translate_prompt = (
-        "다음 텍스트를 전문가의 어조로 자연스럽고 매끄러운 한국어로 번역해. "
-        "서론, 배경 설명, 인사말을 절대 포함하지 말고 번역된 결과만 즉시 출력해:\n\n"
+        "다음 텍스트(중국어/한자가 포함되어 있을 수 있음)를 완벽하고 자연스러운 100% 한국어(한글)로 번역해. "
+        "한자나 중국어 병기는 절대 하지 마. 서론, 배경 설명, 인사말을 빼고 번역된 결과만 즉시 출력해:\n\n"
         f"{text}"
     )
     
@@ -105,7 +106,7 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
             data = resp.json()
             if data.get("success"):
                 translated_text = data["result"]["response"].strip()
-                return translated_text, "🟢 Llama-3.1-8B 한글 번역 보정 완료"
+                return translated_text, "🟢 Llama-3.1-8B 100% 한글 번역 보정 완료"
             else:
                 return text, f"🔴 번역 API 실패: {data.get('errors')}"
         else:
@@ -128,10 +129,11 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, use_custom_
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
+    # 한글 강제 지시문 추가
     if use_custom_prompt:
-        enhanced_prompt = f"{INVESTMENT_AGENT_PROMPT}\n\n사용자 질문: {prompt}"
+        enhanced_prompt = f"{INVESTMENT_AGENT_PROMPT}\n\n[중요: 모든 답변은 반드시 100% 한글로만 작성하고 한자나 중국어는 절대 섞어 쓰지 마세요.]\n\n사용자 질문: {prompt}"
     else:
-        enhanced_prompt = f"서론이나 부연 설명 없이, 반드시 핵심만 한국어로 요약해줘: {prompt}"
+        enhanced_prompt = f"서론이나 부연 설명 없이, 반드시 핵심만 100% 한글로 요약해줘(한자/중국어 절대 사용 금지): {prompt}"
         
     payload = {"messages": [{"role": "user", "content": enhanced_prompt}], "max_tokens": 3000}
     
@@ -149,7 +151,10 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, use_custom_
                     cleaned = raw.strip()
                 
                 translation_info = "⚪ 번역 생략 (자체 한글 출력)"
-                if len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15:
+                
+                # 한자가 한 글자라도 포함되어 있거나, 한글이 너무 적으면 Llama 3.1 번역 가동
+                has_chinese = bool(re.search(r'[\u4e00-\u9fff]', cleaned))
+                if has_chinese or len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15:
                     cleaned, translation_info = translate_to_korean_via_cloudflare(cleaned, account_id, api_token)
 
                 return {
