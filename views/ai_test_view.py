@@ -11,7 +11,7 @@ from services.ai_service import (
 
 def render_ai_test_view():
     st.title("🤖 4대 AI API 통합 & Failover 테스트")
-    st.caption("1순위 Cloudflare, 2순위 Nemotron-3, 3순위 GPT-OSS-20B, 4순위 Cerebras의 4단 무중단 파이프라인을 검증합니다.")
+    st.caption("1순위 Cloudflare (DeepSeek-R1 + m2m100 번역 연계), 2순위 Nemotron-3, 3순위 GPT-OSS-20B, 4순위 Cerebras 파이프라인 검증.")
     st.divider()
 
     sec_cf_id = get_secret("ai.cloudflare_account_id", "")
@@ -53,8 +53,9 @@ def render_ai_test_view():
 
         results = {}
         with st.status("AI 엔진 개별 테스트 진행 중...", expanded=True) as status:
-            st.write("1/4. 🥇 Cloudflare (DeepSeek-R1) 호출 중...")
-            results["1순위: Cloudflare AI"] = test_cloudflare_ai(final_cf_id, final_cf_token, test_prompt, nv_key=final_nv)
+            st.write("1/4. 🥇 Cloudflare (DeepSeek-R1 + m2m100 번역) 호출 중...")
+            # NVIDIA 키 제외, Cloudflare 내에서 자체 번역 수행
+            results["1순위: Cloudflare AI"] = test_cloudflare_ai(final_cf_id, final_cf_token, test_prompt)
             
             st.write("2/4. 🥈 NVIDIA Nemotron-3 Super 호출 중...")
             results["2순위: NVIDIA Nemotron-3"] = test_nvidia_nemotron(final_nv, test_prompt)
@@ -74,6 +75,11 @@ def render_ai_test_view():
                 st.markdown(f"### {name}")
                 if res["status"]:
                     st.success(f"🟢 정상 ({res['latency_ms']} ms)")
+                    
+                    # 번역 상태 정보가 있을 경우 출력 (주로 1순위 Cloudflare용)
+                    if "translation_info" in res:
+                        st.caption(f"**상태:** {res['translation_info']}")
+                        
                     st.info(res["response"])
                 else:
                     st.error("🔴 호출 실패")
