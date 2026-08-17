@@ -3,14 +3,85 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+from collections import Counter
 from config import INSTITUTIONS
 from services.macro_service import fetch_ticker_data
 from services.sec_service import fetch_sec_13f_multi_quarters, classify_qoq_action
+from services.ai_service import call_selected_ai_engine
+from services.prompts import SEC_13F_CONSENSUS_PROMPT
 
 def render_sec_view():
     st.title("📑 주요 기관들의 포트폴리오 (13F Holdings & QoQ Analysis)")
     st.caption("SEC EDGAR 공식 공시 데이터 기반 미국 주요 기관 투자자 포트폴리오 분석 & 기간별 비중 추적")
 
+    # ==========================================
+    # 🤖 [신규 기능] SEC 13F 기관 Money 교집합 기반 투자 테마 AI 요약
+    # ==========================================
+    with st.expander("🤖 [AI] SEC 13F 기관 Money 교집합 테마 분석 (Consensus Summary)", expanded=False):
+        st.markdown("대형 기관 및 슈퍼 인베스터들이 최근 공통으로 보유·확대한 종목군을 바탕으로, **글로벌 스마트머니의 핵심 투자 내러티브와 공통 철학**을 AI가 구조화하여 분석합니다.")
+        
+        col_ai_sel, col_ai_btn = st.columns([2, 1])
+        with col_ai_sel:
+            ai_engine = st.selectbox(
+                "분석에 사용할 AI 엔진을 선택하세요",
+                [
+                    "🛡️ 자동 탐색 (4단 Failover 무중단)",
+                    "🥇 1순위: NVIDIA Nemotron-3 Super (120B)",
+                    "🥈 2순위: Cloudflare AI (DeepSeek-R1-32B)",
+                    "🥉 3순위: NVIDIA GPT-OSS-20B",
+                    "🏅 4순위: Cerebras Cloud (GPT-OSS-120B)"
+                ],
+                key="sec_ai_engine_select"
+            )
+        with col_ai_btn:
+            st.write("")
+            run_13f_ai = st.button("🚀 13F 스마트머니 테마 분석 실행", type="primary", use_container_width=True)
+
+        if run_13f_ai:
+            with st.spinner("전체 기관의 최신 13F 데이터를 취합하여 교집합을 추출 중입니다... (잠시만 기다려주세요)"):
+                all_top_holdings = []
+                
+                # 등록된 전체 기관의 최신 분기 데이터 수집
+                for inst_name, info in INSTITUTIONS.items():
+                    hist, _ = fetch_sec_13f_multi_quarters(info['cik'], max_quarters=1)
+                    if hist and len(hist) > 0:
+                        top_df, _ = hist[0]
+                        # 기관별 상위 20개 종목 추출
+                        top_tickers = top_df.head(20)['name'].tolist()
+                        all_top_holdings.extend(top_tickers)
+                
+                # 교집합 추출 (2개 이상 기관이 공통으로 보유한 종목)
+                common_holdings = Counter(all_top_holdings).most_common(20)
+                context_lines = [f"- {name}: {count}개 대형 기관 공통 보유 (포트폴리오 상위 편입)" for name, count in common_holdings if count >= 2]
+                
+                if not context_lines:
+                    st.warning("공통 보유 종목 데이터를 충분히 추출하지 못했습니다.")
+                else:
+                    context_data = "\n".join(context_lines)
+                    user_prompt = (
+                        f"[최신 SEC 13F 대형 기관 공통 보유 상위 종목 현황]:\n"
+                        f"{context_data}\n\n"
+                        f"위 13F 공통 매수 데이터를 심층 분석하여 글로벌 기관들의 핵심 투자 내러티브와 공통 철학을 구조화된 형식으로 작성해줘."
+                    )
+                    
+                    with st.spinner(f"'{ai_engine}' 엔진으로 13F 스마트머니 내러티브를 분석 중..."):
+                        res = call_selected_ai_engine(ai_engine, user_prompt, SEC_13F_CONSENSUS_PROMPT)
+
+                    if res["status"]:
+                        st.success(f"✅ 분석 완료 (엔진: {res['provider']} | 지연시간: {res['latency_ms']} ms)")
+                        if "translation_info" in res:
+                            st.caption(f"**번역 상태:** {res['translation_info']}")
+                        # AI 응답 출력
+                        st.markdown(f"<div style='padding:1rem; border-radius:0.5rem; background-color:rgba(0,100,255,0.1);'>{res['response']}</div>", unsafe_allow_html=True)
+                    else:
+                        st.error("🔴 분석 생성 실패")
+                        st.caption(res["response"])
+
+    st.divider()
+
+    # ==========================================
+    # 기존 기능: 개별 기관 포트폴리오 분석
+    # ==========================================
     selected_inst_name = st.selectbox("분석할 기관을 선택하세요", options=list(INSTITUTIONS.keys()), index=0)
     inst_info = INSTITUTIONS[selected_inst_name]
     st.info(f"💡 **기관 소개:** {inst_info['desc']} (SEC CIK: `{inst_info['cik']}`)", icon="ℹ️")
