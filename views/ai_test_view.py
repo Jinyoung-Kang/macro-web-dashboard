@@ -11,9 +11,10 @@ from services.ai_service import (
 
 def render_ai_test_view():
     st.title("🤖 5대 AI API 연결 통합 테스트")
-    st.caption("새롭게 추가된 오픈소스 최강자 3곳(OpenRouter, Cerebras, SambaNova)과 NVIDIA, Cloudflare의 상태를 점검합니다.")
+    st.caption("OpenRouter, Cerebras, SambaNova, NVIDIA, Cloudflare의 실시간 API 연결 상태 및 지연시간(Latency)을 점검합니다.")
     st.divider()
 
+    # 1. API 키 셋업 UI
     with st.expander("⚙️ API 인증 키 확인 및 수정", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -25,10 +26,11 @@ def render_ai_test_view():
             st.markdown("##### 2. Cerebras")
             ce_key = st.text_input("Cerebras Key", value=get_secret("ai.cerebras_api_key", ""), type="password")
             st.markdown("##### 5. Cloudflare")
-            cf_id = st.text_input("CF Account ID (이메일 ❌)", value=get_secret("ai.cloudflare_account_id", ""))
-            cf_token = st.text_input("CF API Token", value=get_secret("ai.cloudflare_api_token", ""), type="password")
+            cf_id = st.text_input("CF Account ID (영문/숫자 32자리)", value=get_secret("ai.cloudflare_account_id", ""))
+            cf_token = st.text_input("CF API Token (Workers AI 권한)", value=get_secret("ai.cloudflare_api_token", ""), type="password")
         with c3:
             st.markdown("##### 3. SambaNova")
+            st.caption("※ SambaNova는 사이트에서 카드 등록 필요 (무료)")
             sb_key = st.text_input("SambaNova Key", value=get_secret("ai.sambanova_api_key", ""), type="password")
 
     test_prompt = st.text_input(
