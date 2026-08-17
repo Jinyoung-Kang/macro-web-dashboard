@@ -67,7 +67,8 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
         
         if resp.status_code == 200:
             text = resp.json()["choices"][0]["message"]["content"]
-            # HTML 태그 제거 로직 삭제. 표 안에 <br>이 있어야 Markdown 테이블 내에서 줄바꿈이 됨.
+            # 표 렌더링 방해하는 <br> 태그 일괄 공백 치환
+            text = re.sub(r'(?i)&lt;br\s*/?&gt;|<br\s*/?>', ' ', text)
             return {"status": True, "provider": provider, "model": model, "latency_ms": latency, "response": text.strip()}
         else:
             return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
@@ -114,7 +115,8 @@ def translate_to_korean_via_nvidia(text: str, api_key: str) -> tuple[bool, str]:
         if resp.status_code == 200:
             translated_text = resp.json()["choices"][0]["message"]["content"].strip()
             translated_text = translated_text.replace("美聯儲", "미 연준").replace("下次", "다음")
-            # HTML 태그 제거 로직 삭제
+            # HTML 태그 제거
+            translated_text = re.sub(r'(?i)&lt;br\s*/?&gt;|<br\s*/?>', ' ', translated_text)
             return True, translated_text
         else:
             return False, text
@@ -151,7 +153,8 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
             if data.get("success"):
                 translated_text = data["result"]["response"].strip()
                 translated_text = translated_text.replace("美聯儲", "미 연준").replace("下次", "다음") 
-                # HTML 태그 제거 로직 삭제
+                # HTML 태그 제거
+                translated_text = re.sub(r'(?i)&lt;br\s*/?&gt;|<br\s*/?>', ' ', translated_text)
                 return translated_text, "🟡 CF Llama-3.1-8B 우회 번역 완료"
             else:
                 return text, f"🔴 CF 번역 API 실패: {data.get('errors')}"
@@ -194,6 +197,9 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, use_custom_
                 cleaned = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
                 if not cleaned:
                     cleaned = raw.strip()
+                
+                # HTML 태그 제거
+                cleaned = re.sub(r'(?i)&lt;br\s*/?&gt;|<br\s*/?>', ' ', cleaned)
                 
                 translation_info = "⚪ 번역 생략 (자체 한글 출력)"
                 
