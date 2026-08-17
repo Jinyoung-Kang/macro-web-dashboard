@@ -3,24 +3,61 @@ import time
 import requests
 import streamlit as st
 
-def get_secret(key_path, default=""):
-    keys = key_path.split(".")
-    val = st.secrets
-    for k in keys:
-        if isinstance(val, dict) and k in val:
-            val = val[k]
-        else:
+def get_secret(key_path: str, default: str = "") -> str:
+    """
+    Streamlit Cloud Settings 및 로컬 secrets.toml에서 안전하게 키를 추출하는 강력한 헬퍼 함수
+    1) ai.openrouter_api_key 형태의 중첩 계층 탐색
+    2) openrouter_api_key 단일 키 탐색
+    3) OPENROUTER_API_KEY 대문자 키 탐색
+    """
+    try:
+        if not hasattr(st, "secrets") or not st.secrets:
             return default
-    return str(val) if val else default
+
+        keys = key_path.split(".")
+        
+        # 1. 중첩 키 탐색 (예: [ai] -> openrouter_api_key)
+        val = st.secrets
+        found = True
+        for k in keys:
+            if hasattr(val, "get") and val.get(k) is not None:
+                val = val.get(k)
+            elif hasattr(val, "__getitem__") and k in val:
+                val = val[k]
+            else:
+                found = False
+                break
+        if found and val:
+            return str(val).strip()
+
+        # 2. 단일 키 탐색 (예: openrouter_api_key)
+        leaf_key = keys[-1]
+        if hasattr(st.secrets, "get") and st.secrets.get(leaf_key) is not None:
+            return str(st.secrets.get(leaf_key)).strip()
+        elif hasattr(st.secrets, "__getitem__") and leaf_key in st.secrets:
+            return str(st.secrets[leaf_key]).strip()
+
+        # 3. 대문자 키 탐색 (예: OPENROUTER_API_KEY)
+        upper_key = leaf_key.upper()
+        if hasattr(st.secrets, "get") and st.secrets.get(upper_key) is not None:
+            return str(st.secrets.get(upper_key)).strip()
+        elif hasattr(st.secrets, "__getitem__") and upper_key in st.secrets:
+            return str(st.secrets[upper_key]).strip()
+
+    except Exception:
+        pass
+    return default
 
 def _call_openai_format(provider, url, api_key, model, prompt, timeout=30):
-    """OpenAI API 규격을 사용하는 플랫폼 공통 호출 함수"""
+    """OpenAI 호환 API 공통 호출 함수"""
     if not api_key:
-        return {"status": False, "provider": provider, "model": model, "latency_ms": 0, "response": "API 키가 누락되었습니다. (.streamlit/secrets.toml 확인)"}
+        return {"status": False, "provider": provider, "model": model, "latency_ms": 0, "response": "API 키가 누락되었습니다. (Streamlit 설정의 Secrets를 확인하세요)"}
     
     headers = {
         "Authorization": f"Bearer {api_key}", 
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://streamlit.io",
+        "X-Title": "Macro Web Dashboard"
     }
     payload = {
         "model": model, 
@@ -38,39 +75,35 @@ def _call_openai_format(provider, url, api_key, model, prompt, timeout=30):
             text = resp.json()["choices"][0]["message"]["content"]
             return {"status": True, "provider": provider, "model": model, "latency_ms": latency, "response": text.strip()}
         elif resp.status_code == 402:
-            return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": "HTTP 402: 결제 수단 등록이 필요합니다. (플랫폼에 카드 등록 필요)"}
+            return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": "HTTP 402: 결제 수단 등록이 필요합니다."}
         else:
             return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
     except requests.exceptions.Timeout:
         latency = int((time.time() - start_time) * 1000)
-        return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"타임아웃 에러 ({timeout}초 초과): 서버 콜드스타트 지연"}
+        return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"타임아웃 에러 ({timeout}초 초과)"}
     except Exception as e:
         latency = int((time.time() - start_time) * 1000)
         return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 # ==========================================
-# 각 플랫폼별 호출 래퍼 함수 (최신 무료 모델 슬러그 적용)
+# 각 플랫폼별 호출 함수
 # ==========================================
 def test_openrouter(api_key: str, prompt: str) -> dict:
-    # 70B 모델 유료화로 인해 100% 무료인 8B 모델로 교체
     return _call_openai_format("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", api_key, "meta-llama/llama-3.1-8b-instruct:free", prompt)
 
 def test_cerebras(api_key: str, prompt: str) -> dict:
-    # 404 에러 방지를 위해 정확한 모델명 적용
     return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "llama3.1-8b", prompt)
 
 def test_sambanova(api_key: str, prompt: str) -> dict:
-    # SambaNova 402 에러 대비
     return _call_openai_format("SambaNova Cloud", "https://api.sambanova.ai/v1/chat/completions", api_key, "Meta-Llama-3.1-8B-Instruct", prompt)
 
 def test_nvidia_nim(api_key: str, prompt: str) -> dict:
-    # NVIDIA 콜드스타트 타임아웃 방지를 위해 8B 모델로 낮추고 타임아웃 60초 부여
     return _call_openai_format("NVIDIA NIM", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "meta/llama-3.1-8b-instruct", prompt, timeout=60)
 
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
     model = "@cf/meta/llama-3.1-8b-instruct"
     if not account_id or not api_token:
-        return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": 0, "response": "Account ID 또는 Token 누락"}
+        return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token이 누락되었습니다."}
 
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
@@ -88,7 +121,7 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
             else:
                 return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": latency, "response": f"API Error: {data.get('errors')}"}
         elif resp.status_code == 401:
-            return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": latency, "response": "HTTP 401: 인증 에러. Cloudflare 대시보드에서 'Workers AI' 권한이 있는 API 토큰을 새로 발급받아 입력하세요."}
+            return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": latency, "response": "HTTP 401: 인증 실패. Cloudflare API 토큰 권한을 확인하세요."}
         else:
             return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
     except Exception as e:
