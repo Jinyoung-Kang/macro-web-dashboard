@@ -172,7 +172,7 @@ def test_nvidia_gpt_oss(api_key: str, prompt: str) -> dict:
     return _call_openai_format("NVIDIA NIM (GPT-OSS)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "openai/gpt-oss-20b", prompt, timeout=30)
 
 def test_cerebras(api_key: str, prompt: str) -> dict:
-    """4순위: Cerebras Cloud"""
+    """4순위: Cerebras GPT-OSS-120b"""
     return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt, timeout=20)
 
 # ==========================================
@@ -210,7 +210,7 @@ def generate_ai_briefing_with_failover(prompt: str) -> dict:
     if ce_key:
         res = test_cerebras(ce_key, prompt)
         if res["status"]:
-            res["pipeline_step"] = "4순위 (Cerebras Cloud) Failover 성공"
+            res["pipeline_step"] = "4순위 (Cerebras GPT-OSS-120b) Failover 성공"
             return res
 
     return {
