@@ -146,7 +146,10 @@ def test_cerebras(api_key: str, prompt: str) -> dict:
 
 def test_nvidia_nim(api_key: str, prompt: str) -> dict:
     """3순위: NVIDIA NIM (Llama-3.1-8B)"""
-    return _call_openai_format("NVIDIA NIM", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "meta/llama-3.1-8b-instruct", prompt, timeout=30)
+    return _call_openai_format("NVIDIA NIM", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "nvidia/nemotron-3-super-120b-a12b", prompt, timeout=30)
+
+# 
+# meta/llama-3.1-8b-instruct
 
 # ==========================================
 # 2. 3단 Failover 무중단 AI 브리핑 생성 파이프라인
