@@ -3,6 +3,8 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import yfinance as yf
+import pytz
+from datetime import datetime
 from config import MACRO_CATEGORIES, SPREAD_TABLE_DATA, RISK_MODEL_TABLE
 from services.macro_service import (
     get_collected_macro_data,
@@ -14,25 +16,53 @@ from services.macro_service import (
 )
 
 @st.cache_data(ttl=60)
-def get_live_market_status(symbol: str = "^GSPC") -> tuple[str, str]:
-    """
-    Yahoo Finance API의 marketState 메타데이터를 조회하여 시장 개장 상태를 동적으로 판별
-    반환값: (상태 텍스트, 상태 컬러)
-    """
+def get_us_market_status() -> str:
+    """Yahoo Finance API를 통해 미국 증시(S&P 500 기준) 개장 여부 실시간 확인"""
     try:
-        ticker = yf.Ticker(symbol)
-        state = ticker.info.get("marketState", "CLOSED").upper()
-        
-        if state == "REGULAR":
-            return "실시간 (정규장)", "green"
-        elif state == "PRE":
-            return "프리마켓", "orange"
-        elif state == "POST":
-            return "애프터마켓", "orange"
-        else:
-            return "마감", "gray"
-    except Exception:
-        return "마감", "gray"
+        state = yf.Ticker("^GSPC").info.get("marketState", "CLOSED").upper()
+        # 정규장(REGULAR) 및 프리/애프터마켓(PRE, POST) 진행 중일 때 개장으로 표기
+        if state in ["REGULAR", "PRE", "POST"]:
+            return "개장"
+        return "마감"
+    except:
+        return "마감"
+
+def inject_market_status(name: str) -> str:
+    """지표 이름(name)을 분석하여 현재 한국 시간(KST) 기준 개장/마감 상태를 라벨에 주입"""
+    now = datetime.now(pytz.timezone('Asia/Seoul'))
+    wd = now.weekday()
+    hm = now.hour * 100 + now.minute
+    is_weekend = wd >= 5 # 5: 토요일, 6: 일요일
+    
+    status = "마감"
+    
+    # 지표별 개장 시간 판별 로직 (KST 기준)
+    if "비트코인" in name or "이더리움" in name or "암호화폐" in name:
+        status = "개장" # 코인 24/7 연중무휴
+    elif "코스피" in name or "코스닥" in name:
+        if not is_weekend and 900 <= hm < 1530: status = "개장"
+    elif "닛케이" in name or "일본" in name:
+        if not is_weekend and 900 <= hm < 1500: status = "개장"
+    elif "상하이" in name or "중국" in name:
+        if not is_weekend and 1030 <= hm < 1600: status = "개장"
+    elif "항셍" in name or "홍콩" in name:
+        if not is_weekend and 1030 <= hm < 1700: status = "개장"
+    elif any(k in name for k in ["S&P", "NASDAQ", "나스닥", "다우", "러셀"]):
+        status = get_us_market_status()
+    else:
+        # 외환, 채권 금리, 원자재 (대체로 24시간, 주 5일장)
+        if wd == 5 and hm >= 600: status = "마감" # 토요일 06:00 이후 마감
+        elif wd == 6: status = "마감" # 일요일 전체 마감
+        elif wd == 0 and hm < 600: status = "마감" # 월요일 06:00 이전 마감
+        else: status = "개장"
+
+    # 원래 이름(라벨)의 ]] 태그 안에 상태 주입 (예: :gray[[실시간 / 개장]])
+    if "]]" in name:
+        return name.replace("]]", f" / {status}]]")
+    elif "]" in name:
+        return name.replace("]", f" / {status}]")
+    else:
+        return f"{name} :gray[({status})]"
 
 def render_macro_view(now_str_kst: str, refresh_interval: int):
     collected_data, rate_10y_curr, rate_10y_prev, rate_2y_curr, rate_2y_prev = get_collected_macro_data()
@@ -47,14 +77,10 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
         vix_hist, move_hist, hy_df, cp_spread_df, stlfsi_df, now_str_kst
     )
 
-    # 시장 개장 상태 확인
-    status_label, status_color = get_live_market_status("^GSPC")
-
     header_left, header_right = st.columns([3, 1])
     with header_left:
         st.title("📊 Global Macro Dashboard")
         st.caption(f"최근 데이터 갱신 시각: {now_str_kst} (KST) | 갱신 주기: {refresh_interval}초")
-        st.markdown(f"**미국 증시 상태:** <span style='color:{status_color}; font-weight:bold;'>{status_label}</span>", unsafe_allow_html=True)
 
     with header_right:
         st.write("")
@@ -73,19 +99,23 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
         st.markdown(f"#### {cat_name}")
         cols = st.columns(len(items))
         for idx, item in enumerate(items):
+            
+            # 동적 (개장/마감) 텍스트가 결합된 라벨명 생성
+            display_name = inject_market_status(item["name"])
+            
             if item["status"] == "ok":
                 cols[idx].metric(
-                    label=item["name"],
+                    label=display_name,
                     value=item["price_str"],
                     delta=item["delta_str"],
                     help=f"직전 거래일 종가: {item['prev_str']}"
                 )
                 cols[idx].caption(f"전일 종가: `{item['prev_str']}`")
             elif item["status"] == "single":
-                cols[idx].metric(label=item["name"], value=item["price_str"])
+                cols[idx].metric(label=display_name, value=item["price_str"])
                 cols[idx].caption("전일 데이터 없음")
             else:
-                cols[idx].metric(label=item["name"], value="로드 실패")
+                cols[idx].metric(label=display_name, value="로드 실패")
 
     st.divider()
 
