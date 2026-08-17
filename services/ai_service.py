@@ -4,7 +4,6 @@ import requests
 import streamlit as st
 
 def get_secret(key_path, default=""):
-    """secrets.toml에서 안전하게 키를 추출하는 헬퍼 함수"""
     keys = key_path.split(".")
     val = st.secrets
     for k in keys:
@@ -15,11 +14,13 @@ def get_secret(key_path, default=""):
     return str(val) if val else default
 
 def test_google_ai(api_key: str, prompt: str = "금융 시장의 핵심 거시경제 지표 3가지만 단답형으로 나열해줘.") -> dict:
-    """1. Google AI Studio (Gemini 2.0 Flash) 테스트"""
-    if not api_key:
-        return {"status": False, "provider": "Google AI Studio", "model": "gemini-2.0-flash", "latency_ms": 0, "response": "API 키가 입력되지 않았습니다."}
+    """1. Google AI Studio (Gemini 1.5 Flash) 테스트 - 모델명 수정"""
+    model_name = "gemini-1.5-flash"
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    if not api_key:
+        return {"status": False, "provider": "Google AI Studio", "model": model_name, "latency_ms": 0, "response": "API 키가 입력되지 않았습니다."}
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}]
@@ -27,21 +28,21 @@ def test_google_ai(api_key: str, prompt: str = "금융 시장의 핵심 거시�
     
     start_time = time.time()
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        resp = requests.post(url, headers=headers, json=payload, timeout=20)
         latency = int((time.time() - start_time) * 1000)
         
         if resp.status_code == 200:
             data = resp.json()
             text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return {"status": True, "provider": "Google AI Studio", "model": "gemini-2.0-flash", "latency_ms": latency, "response": text.strip()}
+            return {"status": True, "provider": "Google AI Studio", "model": model_name, "latency_ms": latency, "response": text.strip()}
         else:
-            return {"status": False, "provider": "Google AI Studio", "model": "gemini-2.0-flash", "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
+            return {"status": False, "provider": "Google AI Studio", "model": model_name, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
     except Exception as e:
         latency = int((time.time() - start_time) * 1000)
-        return {"status": False, "provider": "Google AI Studio", "model": "gemini-2.0-flash", "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
+        return {"status": False, "provider": "Google AI Studio", "model": model_name, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 def test_nvidia_nim(api_key: str, model: str = "meta/llama-3.3-70b-instruct", prompt: str = "금융 시장의 핵심 거시경제 지표 3가지만 단답형으로 나열해줘.") -> dict:
-    """2. NVIDIA NIM (Llama 3.3 70B Instruct) 테스트"""
+    """2. NVIDIA NIM (Llama 3.3 70B Instruct) 테스트 - 타임아웃 40초로 연장"""
     if not api_key:
         return {"status": False, "provider": "NVIDIA NIM", "model": model, "latency_ms": 0, "response": "API 키가 입력되지 않았습니다."}
     
@@ -59,7 +60,8 @@ def test_nvidia_nim(api_key: str, model: str = "meta/llama-3.3-70b-instruct", pr
     
     start_time = time.time()
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=20)
+        # Timeout을 20초에서 40초로 연장하여 Cold Start 에러 방지
+        resp = requests.post(url, headers=headers, json=payload, timeout=40)
         latency = int((time.time() - start_time) * 1000)
         
         if resp.status_code == 200:
@@ -72,11 +74,15 @@ def test_nvidia_nim(api_key: str, model: str = "meta/llama-3.3-70b-instruct", pr
         latency = int((time.time() - start_time) * 1000)
         return {"status": False, "provider": "NVIDIA NIM", "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
-def test_cloudflare_ai(account_id: str, api_token: str, model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast", prompt: str = "금융 시장의 핵심 거시경제 지표 3가지만 단답형으로 나열해줘.") -> dict:
-    """3. Cloudflare Workers AI (Llama 3.3 70B) 테스트"""
+def test_cloudflare_ai(account_id: str, api_token: str, model: str = "@cf/meta/llama-3.1-8b-instruct", prompt: str = "금융 시장의 핵심 거시경제 지표 3가지만 단답형으로 나열해줘.") -> dict:
+    """3. Cloudflare Workers AI - 가장 안정적인 Llama 3.1 8B로 모델명 변경"""
     if not account_id or not api_token:
         return {"status": False, "provider": "Cloudflare Workers AI", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token이 누락되었습니다."}
     
+    # 이메일 주소가 들어올 경우를 대비한 1차 방어 로직
+    if "@" in account_id:
+        return {"status": False, "provider": "Cloudflare Workers AI", "model": model, "latency_ms": 0, "response": "Account ID 입력란에 이메일 주소가 입력되었습니다. Cloudflare 대시보드에서 32자리 영문/숫자 조합의 Account ID를 찾아 입력해주세요."}
+
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {
         "Authorization": f"Bearer {api_token}",
