@@ -2,6 +2,7 @@
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
+import yfinance as yf
 from config import MACRO_CATEGORIES, SPREAD_TABLE_DATA, RISK_MODEL_TABLE
 from services.macro_service import (
     get_collected_macro_data,
@@ -11,6 +12,27 @@ from services.macro_service import (
     fetch_fred_cp_spread,
     clean_tag_ui
 )
+
+@st.cache_data(ttl=60)
+def get_live_market_status(symbol: str = "^GSPC") -> tuple[str, str]:
+    """
+    Yahoo Finance API의 marketState 메타데이터를 조회하여 시장 개장 상태를 동적으로 판별
+    반환값: (상태 텍스트, 상태 컬러)
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        state = ticker.info.get("marketState", "CLOSED").upper()
+        
+        if state == "REGULAR":
+            return "실시간 (정규장)", "green"
+        elif state == "PRE":
+            return "프리마켓", "orange"
+        elif state == "POST":
+            return "애프터마켓", "orange"
+        else:
+            return "마감", "gray"
+    except Exception:
+        return "마감", "gray"
 
 def render_macro_view(now_str_kst: str, refresh_interval: int):
     collected_data, rate_10y_curr, rate_10y_prev, rate_2y_curr, rate_2y_prev = get_collected_macro_data()
@@ -25,10 +47,14 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
         vix_hist, move_hist, hy_df, cp_spread_df, stlfsi_df, now_str_kst
     )
 
+    # 시장 개장 상태 확인
+    status_label, status_color = get_live_market_status("^GSPC")
+
     header_left, header_right = st.columns([3, 1])
     with header_left:
         st.title("📊 Global Macro Dashboard")
         st.caption(f"최근 데이터 갱신 시각: {now_str_kst} (KST) | 갱신 주기: {refresh_interval}초")
+        st.markdown(f"**미국 증시 상태:** <span style='color:{status_color}; font-weight:bold;'>{status_label}</span>", unsafe_allow_html=True)
 
     with header_right:
         st.write("")
