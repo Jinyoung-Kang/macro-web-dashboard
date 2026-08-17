@@ -28,6 +28,9 @@ def render_ai_test_view():
             st.markdown("##### 3. Cloudflare Workers AI")
             default_cf_id = get_secret("ai.cloudflare_account_id", "")
             default_cf_token = get_secret("ai.cloudflare_api_token", "")
+            
+            # 주의 문구 추가
+            st.caption("🚨 Account ID는 이메일이 아닙니다! (예: 8a7b6c5...)")
             cf_account_id = st.text_input("Cloudflare Account ID", value=default_cf_id, key="test_cf_id")
             cf_token = st.text_input("Cloudflare API Token", value=default_cf_token, type="password", key="test_cf_token")
 
@@ -44,7 +47,7 @@ def render_ai_test_view():
         st.subheader("📊 테스트 결과")
         
         # 1) Google
-        with st.status("Google AI Studio (Gemini 2.0 Flash) 테스트 중...", expanded=True) as status_g:
+        with st.status("Google AI Studio (Gemini 1.5 Flash) 테스트 중...", expanded=True) as status_g:
             res_g = test_google_ai(google_key, prompt=test_prompt)
             if res_g["status"]:
                 status_g.update(label=f"✅ Google AI Studio 성공 ({res_g['latency_ms']}ms)", state="complete")
@@ -60,7 +63,7 @@ def render_ai_test_view():
                 status_n.update(label="❌ NVIDIA NIM 실패", state="error")
 
         # 3) Cloudflare
-        with st.status("Cloudflare Workers AI (Llama 3.3 70B) 테스트 중...", expanded=True) as status_c:
+        with st.status("Cloudflare Workers AI (Llama 3.1 8B) 테스트 중...", expanded=True) as status_c:
             res_c = test_cloudflare_ai(cf_account_id, cf_token, prompt=test_prompt)
             if res_c["status"]:
                 status_c.update(label=f"✅ Cloudflare Workers AI 성공 ({res_c['latency_ms']}ms)", state="complete")
