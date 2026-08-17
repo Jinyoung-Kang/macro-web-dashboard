@@ -61,10 +61,10 @@ def render_ai_test_view():
         results = {}
         
         with st.status("AI 엔진 릴레이 테스트 진행 중...", expanded=True) as status:
-            st.write("1/5. OpenRouter (Gemma-2-9B) 호출 중...")
+            st.write("1/5. OpenRouter (Phi-3-Mini) 호출 중...")
             results["OpenRouter"] = test_openrouter(final_or, test_prompt)
             
-            st.write("2/5. Cerebras (Llama-3.3-70B) 호출 중...")
+            st.write("2/5. Cerebras (Llama-3.1-8B) 호출 중...")
             results["Cerebras"] = test_cerebras(final_ce, test_prompt)
             
             st.write("3/5. SambaNova 호출 중...")
