@@ -56,7 +56,7 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
             {"role": "user", "content": prompt}
         ], 
         "temperature": 0.2, 
-        "max_tokens": 500
+        "max_tokens": 1500
     }
     
     start_time = time.time()
@@ -77,45 +77,92 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
         return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 # ==========================================
-# 헬퍼 함수: Cloudflare Llama-3.1-8B를 이용한 고품질 한글 번역
+# 헬퍼 함수: 로컬 Ollama 및 Cloudflare 하이브리드 한글 번역기
 # ==========================================
-def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: str) -> tuple[str, str]:
-    """Cloudflare Llama 3.1 8B 모델을 이용해 영어 텍스트를 자연스러운 한국어로 번역"""
-    if not account_id or not api_token or not text:
-        return text, "🔴 번역 불가 (인증키 누락)"
+def translate_smart_korean(text: str, account_id: str = "", api_token: str = "") -> tuple[str, str]:
+    """
+    1) 맥북 로컬 Ollama (Llama 3.1) 우선 시도 (글자 수 제한 없음, 100% 무료)
+    2) 로컬 Ollama 미실행 또는 클라우드 배포 시 Cloudflare Llama 3.1로 자동 우회
+    """
+    if not text:
+        return text, "내용 없음"
 
-    # Llama 3.1 8B Instruct 모델 사용
-    model = "@cf/meta/llama-3.1-8b-instruct"
-    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
-    headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
-    
     translate_prompt = (
-        "다음 텍스트를 전문가의 어조로 자연스럽고 매끄러운 한국어로 번역해. "
-        "다른 군더더기 설명이나 인사말 없이 번역된 결과만 정확하게 출력해:\n\n"
+        "다음 금융 텍스트를 핵심 맥락을 살려 자연스럽고 매끄러운 한국어로 번역해줘. "
+        "서론이나 부연 설명 없이 번역 결과 본문만 출력해:\n\n"
         f"{text}"
     )
-    
-    payload = {"messages": [{"role": "user", "content": translate_prompt}]}
 
+    # 1. 맥북 로컬 Ollama 시도 (http://localhost:11434)
+    try:
+        ollama_url = "http://localhost:11434/v1/chat/completions"
+        ollama_payload = {
+            "model": "llama3.1",
+            "messages": [
+                {"role": "system", "content": "You are a professional financial translator. Translate English into fluent Korean accurately."},
+                {"role": "user", "content": translate_prompt}
+            ],
+            "temperature": 0.2,
+            "max_tokens": 2048
+        }
+        res_ollama = requests.post(ollama_url, json=ollama_payload, timeout=8)
+        if res_ollama.status_code == 200:
+            translated = res_ollama.json()["choices"][0]["message"]["content"].strip()
+            return translated, "🖥️ 맥북 로컬 Ollama (Llama-3.1) 무제한 번역 완료"
+    except Exception:
+        # 로컬 Ollama가 꺼져있거나 Streamlit Cloud 배포 환경일 경우 Cloudflare로 자동 전환
+        pass
+
+    # 2. Cloudflare Llama 3.1 8B 폴백 번역
+    if account_id and api_token:
+        cf_model = "@cf/meta/llama-3.1-8b-instruct"
+        cf_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{cf_model}"
+        cf_headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
+        cf_payload = {"messages": [{"role": "user", "content": translate_prompt}]}
+        
+        try:
+            cf_resp = requests.post(cf_url, headers=cf_headers, json=cf_payload, timeout=20)
+            if cf_resp.status_code == 200:
+                data = cf_resp.json()
+                if data.get("success"):
+                    translated = data["result"]["response"].strip()
+                    return translated, "☁️ Cloudflare (Llama-3.1-8B) 원격 번역 완료"
+        except Exception:
+            pass
+
+    return text, "🔴 번역 실패 (원본 텍스트 유지)"
+
+# ==========================================
+# 개별 API 테스트 함수
+# ==========================================
+def test_local_ollama(prompt: str) -> dict:
+    """맥북 로컬 Ollama Llama 3.1 테스트"""
+    url = "http://localhost:11434/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "model": "llama3.1",
+        "messages": [
+            {"role": "system", "content": "You are a professional financial analyst. Always respond in fluent and clear Korean."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.2,
+        "max_tokens": 2048
+    }
+    start_time = time.time()
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=20)
+        latency = int((time.time() - start_time) * 1000)
         if resp.status_code == 200:
-            data = resp.json()
-            if data.get("success"):
-                translated_text = data["result"]["response"].strip()
-                return translated_text, "🟢 Llama-3.1-8B 한글 번역 보정 완료"
-            else:
-                return text, f"🔴 번역 API 실패: {data.get('errors')}"
+            text = resp.json()["choices"][0]["message"]["content"]
+            return {"status": True, "provider": "Local Ollama (MacBook)", "model": "llama3.1", "latency_ms": latency, "response": text.strip()}
         else:
-            return text, f"🔴 번역 HTTP 에러: {resp.status_code}"
+            return {"status": False, "provider": "Local Ollama (MacBook)", "model": "llama3.1", "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
     except Exception as e:
-        return text, f"🔴 번역 통신 에러: {str(e)}"
+        latency = int((time.time() - start_time) * 1000)
+        return {"status": False, "provider": "Local Ollama (MacBook)", "model": "llama3.1", "latency_ms": latency, "response": f"로컬 연결 실패 (Ollama 앱 실행 여부 확인): {str(e)}"}
 
-# ==========================================
-# 개별 API 테스트 함수 (4개 모델)
-# ==========================================
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
-    """1순위: Cloudflare DeepSeek-R1-32B + Llama 3.1 8B 번역 연계"""
+    """1순위: Cloudflare DeepSeek-R1-32B + 스마트 번역 연계"""
     model = "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
     if not account_id or not api_token:
         return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
@@ -138,9 +185,8 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
                     cleaned = raw.strip()
                 
                 translation_info = "⚪ 번역 생략 (자체 한글 출력)"
-                # 한글 글자 수가 15자 미만이면 Llama 3.1 8B 번역기 가동
                 if len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15:
-                    cleaned, translation_info = translate_to_korean_via_cloudflare(cleaned, account_id, api_token)
+                    cleaned, translation_info = translate_smart_korean(cleaned, account_id, api_token)
 
                 return {
                     "status": True, 
