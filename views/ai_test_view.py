@@ -11,7 +11,7 @@ from services.ai_service import (
 
 def render_ai_test_view():
     st.title("🤖 4대 AI API 통합 & Failover 테스트")
-    st.caption("1순위 Cloudflare (DeepSeek-R1 + Llama-3.2-3B 번역), 2순위 Nemotron-3, 3순위 GPT-OSS-20B, 4순위 Cerebras")
+    st.caption("1순위 Cloudflare (DeepSeek-R1 + Llama-3.1 번역), 2순위 Nemotron-3, 3순위 GPT-OSS-20B, 4순위 Cerebras 파이프라인 검증.")
     st.divider()
 
     # Secrets 환경변수 전용 로드 (화면 노출 X)
@@ -50,7 +50,7 @@ def render_ai_test_view():
         
         results = {}
         with st.status("AI 엔진 개별 테스트 진행 중...", expanded=True) as status:
-            st.write("1/4. 🥇 Cloudflare (DeepSeek-R1 + Llama-3.2 번역) 호출 중...")
+            st.write("1/4. 🥇 Cloudflare (DeepSeek-R1 + Llama-3.1 번역) 호출 중...")
             results["1순위: Cloudflare AI"] = test_cloudflare_ai(sec_cf_id, sec_cf_token, test_prompt)
             
             st.write("2/4. 🥈 NVIDIA Nemotron-3 Super 호출 중...")
