@@ -128,6 +128,7 @@ LIVE_CLOCK_HTML = """
 <html>
 <head>
 <style>
+    /* 기본 리셋 및 다크 테마 폰트 설정 */
     body {
         margin: 0;
         padding: 0;
@@ -140,6 +141,7 @@ LIVE_CLOCK_HTML = """
         height: 100vh;
     }
     
+    /* 시계 컨테이너 모던 UI */
     .clock-container {
         display: flex;
         gap: 24px;
@@ -150,6 +152,7 @@ LIVE_CLOCK_HTML = """
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
     
+    /* 시장 상태 뱃지 공통 스타일 */
     .market-badge {
         margin-left: 10px;
         padding: 3px 8px;
@@ -160,9 +163,10 @@ LIVE_CLOCK_HTML = """
         display: inline-block;
     }
     
+    /* 상태별 테마 컬러 */
     .status-trading { background: rgba(16, 185, 129, 0.15); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.4); } /* 거래 중 */
-    .status-pre     { background: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); } /* 장 전 */
-    .status-post    { background: rgba(139, 92, 246, 0.15); color: #8B5CF6; border: 1px solid rgba(139, 92, 246, 0.4); } /* 장 후 */
+    .status-pre     { background: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); } /* 프리마켓 */
+    .status-post    { background: rgba(139, 92, 246, 0.15); color: #8B5CF6; border: 1px solid rgba(139, 92, 246, 0.4); } /* 애프터마켓 */
     .status-closed  { background: rgba(107, 114, 128, 0.15); color: #9CA3AF; border: 1px solid rgba(107, 114, 128, 0.4); } /* 휴장 / 장 마감 */
 </style>
 </head>
@@ -256,8 +260,8 @@ LIVE_CLOCK_HTML = """
                     return { text: "휴장 (공휴일)", className: "status-closed" };
                 }
                 if (timeNum >= 900 && timeNum < 1530) return { text: "거래 중", className: "status-trading" };
-                if (timeNum >= 830 && timeNum < 900)  return { text: "장 전", className: "status-pre" };
-                if (timeNum >= 1530 && timeNum <= 1800) return { text: "장 후", className: "status-post" };
+                if (timeNum >= 830 && timeNum < 900)  return { text: "프리마켓", className: "status-pre" };
+                if (timeNum >= 1530 && timeNum <= 1800) return { text: "애프터마켓", className: "status-post" };
                 return { text: "장 마감", className: "status-closed" };
             } 
             // NASDAQ 판별
@@ -266,8 +270,8 @@ LIVE_CLOCK_HTML = """
                     return { text: "휴장 (공휴일)", className: "status-closed" };
                 }
                 if (timeNum >= 930 && timeNum < 1600) return { text: "거래 중", className: "status-trading" };
-                if (timeNum >= 400 && timeNum < 930)  return { text: "장 전", className: "status-pre" };
-                if (timeNum >= 1600 && timeNum <= 2000) return { text: "장 후", className: "status-post" };
+                if (timeNum >= 400 && timeNum < 930)  return { text: "프리마켓", className: "status-pre" };
+                if (timeNum >= 1600 && timeNum <= 2000) return { text: "애프터마켓", className: "status-post" };
                 return { text: "장 마감", className: "status-closed" };
             }
         }
