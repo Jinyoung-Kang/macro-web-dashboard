@@ -14,7 +14,6 @@ def render_ai_test_view():
     st.caption("Streamlit Cloud Secrets에 등록된 키를 바탕으로 실시간 API 연결 상태 및 지연시간(Latency)을 점검합니다.")
     st.divider()
 
-    # Secrets에서 키 자동 로드
     sec_or_key = get_secret("ai.openrouter_api_key", "")
     sec_ce_key = get_secret("ai.cerebras_api_key", "")
     sec_sb_key = get_secret("ai.sambanova_api_key", "")
@@ -22,7 +21,6 @@ def render_ai_test_view():
     sec_cf_id = get_secret("ai.cloudflare_account_id", "")
     sec_cf_token = get_secret("ai.cloudflare_api_token", "")
 
-    # 1. API 인증 상태 확인 패널
     with st.expander("⚙️ Streamlit Secrets 인증 키 로드 상태 확인 (클릭하여 펼치기)", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -50,11 +48,9 @@ def render_ai_test_view():
     )
     st.write("")
     
-    # 2. 테스트 실행
     if st.button("🚀 5대 AI API 전체 일괄 연결 테스트 실행", type="primary", use_container_width=True):
         st.subheader("📊 테스트 결과")
         
-        # 입력창의 값 또는 Secrets 값 자동 바인딩
         final_or = or_key or sec_or_key
         final_ce = ce_key or sec_ce_key
         final_sb = sb_key or sec_sb_key
@@ -65,10 +61,10 @@ def render_ai_test_view():
         results = {}
         
         with st.status("AI 엔진 릴레이 테스트 진행 중...", expanded=True) as status:
-            st.write("1/5. OpenRouter 호출 중...")
+            st.write("1/5. OpenRouter (Gemma-2-9B) 호출 중...")
             results["OpenRouter"] = test_openrouter(final_or, test_prompt)
             
-            st.write("2/5. Cerebras 호출 중...")
+            st.write("2/5. Cerebras (Llama-3.3-70B) 호출 중...")
             results["Cerebras"] = test_cerebras(final_ce, test_prompt)
             
             st.write("3/5. SambaNova 호출 중...")
@@ -84,7 +80,6 @@ def render_ai_test_view():
             
         st.divider()
 
-        # 3. 결과 카드 출력
         cols = st.columns(3)
         for i, (name, res) in enumerate(results.items()):
             with cols[i % 3]:
