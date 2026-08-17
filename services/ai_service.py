@@ -4,19 +4,13 @@ import requests
 import streamlit as st
 
 def get_secret(key_path: str, default: str = "") -> str:
-    """
-    Streamlit Cloud Settings 및 로컬 secrets.toml에서 안전하게 키를 추출하는 강력한 헬퍼 함수
-    1) ai.openrouter_api_key 형태의 중첩 계층 탐색
-    2) openrouter_api_key 단일 키 탐색
-    3) OPENROUTER_API_KEY 대문자 키 탐색
-    """
+    """Streamlit Cloud Settings 및 로컬 secrets.toml에서 안전하게 키를 추출하는 헬퍼 함수"""
     try:
         if not hasattr(st, "secrets") or not st.secrets:
             return default
 
         keys = key_path.split(".")
         
-        # 1. 중첩 키 탐색 (예: [ai] -> openrouter_api_key)
         val = st.secrets
         found = True
         for k in keys:
@@ -30,14 +24,12 @@ def get_secret(key_path: str, default: str = "") -> str:
         if found and val:
             return str(val).strip()
 
-        # 2. 단일 키 탐색 (예: openrouter_api_key)
         leaf_key = keys[-1]
         if hasattr(st.secrets, "get") and st.secrets.get(leaf_key) is not None:
             return str(st.secrets.get(leaf_key)).strip()
         elif hasattr(st.secrets, "__getitem__") and leaf_key in st.secrets:
             return str(st.secrets[leaf_key]).strip()
 
-        # 3. 대문자 키 탐색 (예: OPENROUTER_API_KEY)
         upper_key = leaf_key.upper()
         if hasattr(st.secrets, "get") and st.secrets.get(upper_key) is not None:
             return str(st.secrets.get(upper_key)).strip()
@@ -86,13 +78,15 @@ def _call_openai_format(provider, url, api_key, model, prompt, timeout=30):
         return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 # ==========================================
-# 각 플랫폼별 호출 함수
+# 각 플랫폼별 호출 함수 (에러 발생 모델명 전면 수정)
 # ==========================================
 def test_openrouter(api_key: str, prompt: str) -> dict:
-    return _call_openai_format("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", api_key, "meta-llama/llama-3.1-8b-instruct:free", prompt)
+    # Llama가 유료화되어 100% 무료인 Google Gemma 2 모델로 교체
+    return _call_openai_format("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", api_key, "google/gemma-2-9b-it:free", prompt)
 
 def test_cerebras(api_key: str, prompt: str) -> dict:
-    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "llama3.1-8b", prompt)
+    # 8B 모델명 오류 방지를 위해 최신 플래그십 Llama 3.3 70B 모델로 교체
+    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "llama3.3-70b", prompt)
 
 def test_sambanova(api_key: str, prompt: str) -> dict:
     return _call_openai_format("SambaNova Cloud", "https://api.sambanova.ai/v1/chat/completions", api_key, "Meta-Llama-3.1-8B-Instruct", prompt)
