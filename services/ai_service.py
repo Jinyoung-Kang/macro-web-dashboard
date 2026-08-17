@@ -116,8 +116,12 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
 # ==========================================
 # 개별 API 테스트 함수 (4개 모델)
 # ==========================================
+def test_nvidia_nemotron(api_key: str, prompt: str) -> dict:
+    """NVIDIA Nemotron-3 Super 120B"""
+    return _call_openai_format("NVIDIA NIM (Nemotron)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "nvidia/nemotron-3-super-120b-a12b", prompt, timeout=40)
+
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
-    """1순위: Cloudflare DeepSeek-R1-32B + Llama 3.1 8B 번역 연계"""
+    """Cloudflare DeepSeek-R1-32B + Llama 3.1 8B 번역 연계"""
     model = "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
     if not account_id or not api_token:
         return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
@@ -125,7 +129,6 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
-    # 서론을 자르기 위해 프롬프트 강화
     enhanced_prompt = f"서론이나 부연 설명 없이, 반드시 핵심만 한국어로 요약해줘: {prompt}"
     payload = {"messages": [{"role": "user", "content": enhanced_prompt}], "max_tokens": 1500}
     
@@ -143,7 +146,6 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
                     cleaned = raw.strip()
                 
                 translation_info = "⚪ 번역 생략 (자체 한글 출력)"
-                # 한글 글자 수가 15자 미만이면 Llama 3.1 8B 번역기 가동
                 if len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15:
                     cleaned, translation_info = translate_to_korean_via_cloudflare(cleaned, account_id, api_token)
 
@@ -163,40 +165,42 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
         latency = int((time.time() - start_time) * 1000)
         return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
-def test_nvidia_nemotron(api_key: str, prompt: str) -> dict:
-    """2순위: NVIDIA Nemotron-3 Super 120B"""
-    return _call_openai_format("NVIDIA NIM (Nemotron)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "nvidia/nemotron-3-super-120b-a12b", prompt, timeout=40)
-
 def test_nvidia_gpt_oss(api_key: str, prompt: str) -> dict:
-    """3순위: NVIDIA GPT-OSS-20B"""
+    """NVIDIA GPT-OSS-20B"""
     return _call_openai_format("NVIDIA NIM (GPT-OSS)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "openai/gpt-oss-20b", prompt, timeout=30)
 
 def test_cerebras(api_key: str, prompt: str) -> dict:
-    """4순위: Cerebras GPT-OSS-120b"""
+    """Cerebras Cloud GPT-OSS-120B"""
     return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt, timeout=20)
 
 # ==========================================
 # 4단 Failover 무중단 AI 브리핑 생성 파이프라인
 # ==========================================
 def generate_ai_briefing_with_failover(prompt: str) -> dict:
+    """
+    1순위: NVIDIA Nemotron-3 Super 120B
+    2순위: Cloudflare AI (DeepSeek-R1-32B)
+    3순위: NVIDIA GPT-OSS-20B
+    4순위: Cerebras Cloud (GPT-OSS-120B)
+    """
+    nv_key = get_secret("ai.nvidia_api_key", "")
     cf_id = get_secret("ai.cloudflare_account_id", "")
     cf_token = get_secret("ai.cloudflare_api_token", "")
-    nv_key = get_secret("ai.nvidia_api_key", "")
     ce_key = get_secret("ai.cerebras_api_key", "")
 
     # 1순위
+    if nv_key:
+        res = test_nvidia_nemotron(nv_key, prompt)
+        if res["status"]:
+            res["pipeline_step"] = "1순위 (NVIDIA Nemotron-3) 정상 응답"
+            return res
+
+    # 2순위
     if cf_id and cf_token:
         res = test_cloudflare_ai(cf_id, cf_token, prompt)
         if res["status"]:
             trans_msg = res.get("translation_info", "상태 없음")
-            res["pipeline_step"] = f"1순위 (Cloudflare AI) 정상 응답 [{trans_msg}]"
-            return res
-
-    # 2순위
-    if nv_key:
-        res = test_nvidia_nemotron(nv_key, prompt)
-        if res["status"]:
-            res["pipeline_step"] = "2순위 (NVIDIA Nemotron-3) Failover 성공"
+            res["pipeline_step"] = f"2순위 (Cloudflare AI) Failover 성공 [{trans_msg}]"
             return res
 
     # 3순위
@@ -210,7 +214,7 @@ def generate_ai_briefing_with_failover(prompt: str) -> dict:
     if ce_key:
         res = test_cerebras(ce_key, prompt)
         if res["status"]:
-            res["pipeline_step"] = "4순위 (Cerebras GPT-OSS-120b) Failover 성공"
+            res["pipeline_step"] = "4순위 (Cerebras Cloud) Failover 성공"
             return res
 
     return {
