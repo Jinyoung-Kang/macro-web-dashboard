@@ -2,6 +2,7 @@
 import streamlit as st
 from services.ai_service import (
     get_secret, 
+    check_ollama_status,
     test_cloudflare_ai,
     test_nvidia_nemotron,
     test_nvidia_gpt_oss,
@@ -13,7 +14,7 @@ from services.ai_service import (
 
 def render_ai_test_view():
     st.title("🤖 AI API 통합 & 로컬 Ollama 테스트")
-    st.caption("1순위 Cloudflare(DeepSeek-R1), 2순위 Nemotron-3, 3순위 GPT-OSS-20B, 4순위 Cerebras 및 맥북 로컬 Ollama 연동")
+    st.caption("클라우드 엔진 4종(Cloudflare, Nemotron, GPT-OSS, Cerebras) 및 맥북 로컬 Ollama의 실시간 연결 상태를 검증합니다.")
     st.divider()
 
     sec_cf_id = get_secret("ai.cloudflare_account_id", "")
@@ -21,15 +22,20 @@ def render_ai_test_view():
     sec_nv_key = get_secret("ai.nvidia_api_key", "")
     sec_ce_key = get_secret("ai.cerebras_api_key", "")
 
-    # API 키 로드 상태 확인
-    with st.expander("⚙️ Streamlit Secrets 인증 키 로드 상태", expanded=True):
-        c1, c2, c3, c4 = st.columns(4)
+    # Ollama 로컬 서버 활성화 여부 실시간 체크
+    is_ollama_alive = check_ollama_status()
+
+    # 엔진 연결 상태 5열 배치 (Ollama + 클라우드 4종)
+    with st.expander("⚙️ 엔진 연결 및 인증 키 로드 상태", expanded=True):
+        c_local, c1, c2, c3, c4 = st.columns(5)
+        with c_local:
+            st.markdown(f"**💻 로컬 Ollama:**<br>{'🟢 켜짐 (작동중)' if is_ollama_alive else '🔴 꺼짐 (미실행)'}", unsafe_allow_html=True)
         with c1:
-            st.markdown(f"**🥇 1순위 Cloudflare:**<br>{'🟢 로드 완료' if (sec_cf_id and sec_cf_token) else '🔴 미설정'}", unsafe_allow_html=True)
+            st.markdown(f"**🥇 1순위 CF AI:**<br>{'🟢 로드 완료' if (sec_cf_id and sec_cf_token) else '🔴 미설정'}", unsafe_allow_html=True)
         with c2:
-            st.markdown(f"**🥈 2순위 Nemotron-3:**<br>{'🟢 로드 완료' if sec_nv_key else '🔴 미설정'}", unsafe_allow_html=True)
+            st.markdown(f"**🥈 2순위 Nemotron:**<br>{'🟢 로드 완료' if sec_nv_key else '🔴 미설정'}", unsafe_allow_html=True)
         with c3:
-            st.markdown(f"**🥉 3순위 GPT-OSS-20B:**<br>{'🟢 로드 완료' if sec_nv_key else '🔴 미설정'}", unsafe_allow_html=True)
+            st.markdown(f"**🥉 3순위 GPT-OSS:**<br>{'🟢 로드 완료' if sec_nv_key else '🔴 미설정'}", unsafe_allow_html=True)
         with c4:
             st.markdown(f"**🏅 4순위 Cerebras:**<br>{'🟢 로드 완료' if sec_ce_key else '🔴 미설정'}", unsafe_allow_html=True)
 
@@ -113,15 +119,18 @@ def render_ai_test_view():
             run_smart_trans = st.button("🔄 하이브리드 스마트 번역 (로컬 $\\rightarrow$ 원격 자동선택)", use_container_width=True)
 
         if run_ollama_direct:
-            with st.spinner("맥북 로컬 Llama 3.1 추론 중..."):
-                ol_res = test_local_ollama(f"다음 텍스트를 자연스러운 한국어로 번역해줘:\n\n{sample_english}")
-            if ol_res["status"]:
-                st.success(f"🟢 번역 성공 ({ol_res['latency_ms']} ms)")
-                st.markdown("##### 📖 한국어 번역 결과:")
-                st.info(ol_res["response"])
+            if not is_ollama_alive:
+                st.error("🔴 로컬 서버가 응답하지 않습니다. 터미널에서 `ollama run llama3.1`을 실행해 주세요.")
             else:
-                st.error("🔴 로컬 Ollama 연결 실패")
-                st.caption(ol_res["response"])
+                with st.spinner("맥북 로컬 Llama 3.1 추론 중..."):
+                    ol_res = test_local_ollama(f"다음 텍스트를 자연스러운 한국어로 번역해줘:\n\n{sample_english}")
+                if ol_res["status"]:
+                    st.success(f"🟢 번역 성공 ({ol_res['latency_ms']} ms)")
+                    st.markdown("##### 📖 한국어 번역 결과:")
+                    st.info(ol_res["response"])
+                else:
+                    st.error("🔴 로컬 Ollama 연결 실패")
+                    st.caption(ol_res["response"])
 
         if run_smart_trans:
             with st.spinner("최적 번역 엔진 탐색 중..."):
