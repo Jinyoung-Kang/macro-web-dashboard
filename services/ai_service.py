@@ -67,6 +67,8 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
         
         if resp.status_code == 200:
             text = resp.json()["choices"][0]["message"]["content"]
+            # [수정] HTML 줄바꿈 태그(<br>, <br/>)를 마크다운 표준 줄바꿈(\n)으로 일괄 치환
+            text = re.sub(r'<br\s*/?>', '\n', text)
             return {"status": True, "provider": provider, "model": model, "latency_ms": latency, "response": text.strip()}
         else:
             return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
@@ -112,7 +114,9 @@ def translate_to_korean_via_nvidia(text: str, api_key: str) -> tuple[bool, str]:
         resp = requests.post(url, headers=headers, json=payload, timeout=20)
         if resp.status_code == 200:
             translated_text = resp.json()["choices"][0]["message"]["content"].strip()
-            translated_text = translated_text.replace("美聯儲", "미 연준").replace("下次", "다음") 
+            translated_text = translated_text.replace("美聯儲", "미 연준").replace("下次", "다음")
+            # [수정] 번역기에서도 HTML 태그 제거
+            translated_text = re.sub(r'<br\s*/?>', '\n', translated_text)
             return True, translated_text
         else:
             return False, text
@@ -149,6 +153,8 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
             if data.get("success"):
                 translated_text = data["result"]["response"].strip()
                 translated_text = translated_text.replace("美聯儲", "미 연준").replace("下次", "다음") 
+                # [수정] 번역기에서도 HTML 태그 제거
+                translated_text = re.sub(r'<br\s*/?>', '\n', translated_text)
                 return translated_text, "🟡 CF Llama-3.1-8B 우회 번역 완료"
             else:
                 return text, f"🔴 CF 번역 API 실패: {data.get('errors')}"
@@ -172,7 +178,6 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, use_custom_
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
-    # 한글 강제 지시문 추가
     if use_custom_prompt:
         enhanced_prompt = f"{INVESTMENT_AGENT_PROMPT}\n\n[중요: 모든 답변은 반드시 100% 한글로만 작성하고 한자나 중국어는 절대 섞어 쓰지 마세요.]\n\n사용자 질문: {prompt}"
     else:
@@ -193,13 +198,14 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, use_custom_
                 if not cleaned:
                     cleaned = raw.strip()
                 
+                # [수정] DeepSeek 원본 응답에서도 HTML 태그 제거
+                cleaned = re.sub(r'<br\s*/?>', '\n', cleaned)
+                
                 translation_info = "⚪ 번역 생략 (자체 한글 출력)"
                 
-                # CJK 한자가 포함되어 있거나 한글이 너무 적으면 번역 프로세스 가동
                 has_chinese = bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf]', cleaned)) 
                 if has_chinese or len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15:
                     
-                    # 1순위: NVIDIA GPT-OSS 번역 시도
                     nv_key = get_secret("ai.nvidia_api_key", "")
                     translated_ok = False
                     if nv_key:
@@ -209,7 +215,6 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, use_custom_
                             translation_info = "🟢 NVIDIA GPT-OSS 100% 한글 번역 완료"
                             translated_ok = True
                     
-                    # 2순위: NVIDIA 실패 시 Cloudflare Llama 번역 시도
                     if not translated_ok:
                         cleaned, translation_info = translate_to_korean_via_cloudflare(cleaned, account_id, api_token)
 
