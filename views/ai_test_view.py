@@ -31,7 +31,7 @@ def render_ai_test_view():
         with c4:
             st.markdown(f"**🏅 4순위 Cerebras:**<br>{'🟢 로드 완료' if sec_ce_key else '🔴 미설정'}", unsafe_allow_html=True)
 
-    # 🚀 커스텀 프롬프트 적용 여부 토글
+    # 🚀 커스텀 프롬프트 적용 여부 토글 (이 부분이 핵심입니다)
     use_custom_prompt = st.toggle("🧠 **투자 가설 검증 Agent 모드 활성화**", value=True, help="체크 시 글로벌 매크로 헤지펀드 시니어의 엄격한 분석 프레임워크(사실/해석 분리, 시나리오, 체크리스트 등)가 적용됩니다.")
 
     # 기본 프롬프트 값 설정 (모드에 따라 다르게)
