@@ -43,7 +43,7 @@ def get_secret(key_path: str, default: str = "") -> str:
 def _call_openai_format(provider: str, url: str, api_key: str, model: str, prompt: str, timeout: int = 30) -> dict:
     """OpenAI 호환 API 공통 호출 내부 함수"""
     if not api_key:
-        return {"status": False, "provider": provider, "model": model, "latency_ms": 0, "response": "API 키가 누락되었습니다."}
+        return {"status": False, "provider": provider, "model": model, "latency_ms": 0, "response": "API 키 누락"}
     
     headers = {
         "Authorization": f"Bearer {api_key}", 
@@ -77,31 +77,33 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
         return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 # ==========================================
-# 헬퍼 함수: 영어 텍스트를 Cloudflare m2m100-1.2b로 한글 번역
+# 헬퍼 함수: Cloudflare Llama-3.2-3B를 이용한 고품질 한글 번역
 # ==========================================
 def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: str) -> tuple[str, str]:
-    """Cloudflare의 전용 번역 모델을 이용해 영어 텍스트를 한국어로 변환"""
+    """Cloudflare Llama 3.2 3B 모델을 이용해 영어 텍스트를 자연스러운 한국어로 번역"""
     if not account_id or not api_token or not text:
         return text, "🔴 번역 불가 (인증키 누락)"
 
-    model = "@cf/meta/m2m100-1.2b"
+    # Llama 3.2 3B Instruct 모델 사용 (빠르고 번역 품질 우수)
+    model = "@cf/meta/llama-3.2-3b-instruct"
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
-    # Cloudflare Translation API 규격
-    payload = {
-        "text": text,
-        "source_lang": "english",
-        "target_lang": "korean"
-    }
+    translate_prompt = (
+        "다음 텍스트를 금융 전문가의 어조로 자연스럽고 매끄러운 한국어로 번역해. "
+        "다른 군더더기 설명이나 인사말 없이 번역된 결과만 정확하게 출력해:\n\n"
+        f"{text}"
+    )
+    
+    payload = {"messages": [{"role": "user", "content": translate_prompt}]}
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        resp = requests.post(url, headers=headers, json=payload, timeout=20)
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success"):
-                translated_text = data["result"]["translated_text"]
-                return translated_text, "🟢 m2m100 모델 한글 자동번역 완료"
+                translated_text = data["result"]["response"].strip()
+                return translated_text, "🟢 Llama-3.2-3B 한글 번역 보정 완료"
             else:
                 return text, f"🔴 번역 API 실패: {data.get('errors')}"
         else:
@@ -113,7 +115,7 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
 # 개별 API 테스트 함수 (4개 모델)
 # ==========================================
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
-    """1순위: Cloudflare Workers AI (DeepSeek-R1-32B) + m2m100 한글 번역 보정"""
+    """1순위: Cloudflare DeepSeek-R1-32B + Llama 3.2 3B 번역 연계"""
     model = "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
     if not account_id or not api_token:
         return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
@@ -131,32 +133,30 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
             data = resp.json()
             if data.get("success"):
                 raw = data["result"]["response"]
-                
-                # 1) DeepSeek의 <think> 사고 과정 태그 제거
                 cleaned = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
                 if not cleaned:
                     cleaned = raw.strip()
                 
-                # 2) 한글 포함 여부 확인 및 필요 시 Cloudflare m2m100 번역 모델 호출
-                translation_info = "⚪ 번역 생략 (한글 출력 확인됨)"
+                translation_info = "⚪ 번역 생략 (자체 한글 출력)"
+                # 한글 글자 수가 15자 미만이면 Llama 3.2 3B 번역기 가동
                 if len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15:
                     cleaned, translation_info = translate_to_korean_via_cloudflare(cleaned, account_id, api_token)
 
                 return {
                     "status": True, 
-                    "provider": "Cloudflare Workers AI", 
+                    "provider": "Cloudflare AI", 
                     "model": model, 
                     "latency_ms": latency, 
                     "response": cleaned,
                     "translation_info": translation_info
                 }
             else:
-                return {"status": False, "provider": "Cloudflare Workers AI", "model": model, "latency_ms": latency, "response": f"API Error: {data.get('errors')}"}
+                return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": latency, "response": f"API Error: {data.get('errors')}"}
         else:
-            return {"status": False, "provider": "Cloudflare Workers AI", "model": model, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
+            return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
     except Exception as e:
         latency = int((time.time() - start_time) * 1000)
-        return {"status": False, "provider": "Cloudflare Workers AI", "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
+        return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 def test_nvidia_nemotron(api_key: str, prompt: str) -> dict:
     """2순위: NVIDIA Nemotron-3 Super 120B"""
@@ -183,7 +183,7 @@ def generate_ai_briefing_with_failover(prompt: str) -> dict:
     if cf_id and cf_token:
         res = test_cloudflare_ai(cf_id, cf_token, prompt)
         if res["status"]:
-            trans_msg = res.get("translation_info", "번역 상태 없음")
+            trans_msg = res.get("translation_info", "상태 없음")
             res["pipeline_step"] = f"1순위 (Cloudflare AI) 정상 응답 [{trans_msg}]"
             return res
 
@@ -214,5 +214,5 @@ def generate_ai_briefing_with_failover(prompt: str) -> dict:
         "model": "Fallback",
         "latency_ms": 0,
         "pipeline_step": "모든 AI 엔진 연결 실패",
-        "response": "현재 모든 AI 서버가 일시적인 트래픽 폭주 또는 점검 상태입니다. 잠시 후 다시 새로고침해 주세요."
+        "response": "현재 모든 AI 서버가 일시적인 트래픽 폭주 또는 점검 상태입니다. 잠시 후 다시 시도해 주세요."
     }
