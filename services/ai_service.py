@@ -77,15 +77,15 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
         return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 # ==========================================
-# 헬퍼 함수: Cloudflare Llama-3.2-3B를 이용한 고품질 한글 번역
+# 헬퍼 함수: Cloudflare Llama-3.1-8b를 이용한 고품질 한글 번역
 # ==========================================
 def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: str) -> tuple[str, str]:
-    """Cloudflare Llama 3.2 3B 모델을 이용해 영어 텍스트를 자연스러운 한국어로 번역"""
+    """Cloudflare Llama 3.1-8b 모델을 이용해 영어 텍스트를 자연스러운 한국어로 번역"""
     if not account_id or not api_token or not text:
         return text, "🔴 번역 불가 (인증키 누락)"
 
     # Llama 3.2 3B Instruct 모델 사용 (빠르고 번역 품질 우수)
-    model = "@cf/meta/llama-3.2-3b-instruct"
+    model = "@cf/meta/llama-3.1-8b-instruct"
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
