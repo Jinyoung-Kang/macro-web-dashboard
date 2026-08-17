@@ -79,7 +79,7 @@ def test_cerebras(api_key: str, prompt: str) -> dict:
     return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt, timeout=20)
 
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
-    model = "@cf/meta/llama-3.1-8b-instruct"
+    model = "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
     if not account_id or not api_token:
         return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token이 누락되었습니다."}
 
@@ -105,7 +105,7 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
         return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 def test_nvidia_nim(api_key: str, prompt: str) -> dict:
-    return _call_openai_format("NVIDIA NIM", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "meta/llama-3.1-8b-instruct", prompt, timeout=40)
+    return _call_openai_format("NVIDIA NIM", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "nvidia/llama-3.1-nemotron-70b-instruct", prompt, timeout=40)
 
 # ==========================================
 # 2. 3단 Failover 무중단 AI 브리핑 생성 파이프라인
