@@ -180,7 +180,7 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prom
     else:
         enhanced_prompt = f"서론이나 부연 설명 없이, 반드시 핵심만 100% 한글로 요약해줘(한자/중국어 절대 사용 금지): {prompt}"
         
-    payload = {"messages": [{"role": "user", "content": enhanced_prompt}], "max_tokens": 3000}
+    payload = {"messages": [{"role": "user", "content": enhanced_prompt}], "max_tokens": 10000}
     
     start_time = time.time()
     try:
@@ -230,11 +230,11 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prom
 
 def test_nvidia_gpt_oss(api_key: str, prompt: str, system_prompt: str = None) -> dict:
     sys_prompt = system_prompt or "You are a professional financial analyst. Always respond in fluent and clear Korean. Do not include introductory or explanatory phrases."
-    return _call_openai_format("NVIDIA NIM (GPT-OSS)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "openai/gpt-oss-20b", prompt, system_prompt=sys_prompt, timeout=40)
+    return _call_openai_format("NVIDIA NIM (GPT-OSS)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "openai/gpt-oss-20b", prompt, system_prompt=sys_prompt, timeout=60)
 
 def test_cerebras(api_key: str, prompt: str, system_prompt: str = None) -> dict:
     sys_prompt = system_prompt or "You are a professional financial analyst. Always respond in fluent and clear Korean. Do not include introductory or explanatory phrases."
-    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt, system_prompt=sys_prompt, timeout=30)
+    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt, system_prompt=sys_prompt, timeout=60)
 
 # ==========================================
 # 4단 Failover 무중단 AI 브리핑 생성 파이프라인
