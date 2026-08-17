@@ -3,7 +3,7 @@ import re
 import time
 import requests
 import streamlit as st
-from services.prompts import INVESTMENT_AGENT_PROMPT
+from services.prompts import INVESTMENT_AGENT_PROMPT, SEC_13F_CONSENSUS_PROMPT
 
 def get_secret(key_path: str, default: str = "") -> str:
     """Streamlit Cloud Settings 및 secrets.toml에서 안전하게 키를 추출하는 헬퍼 함수"""
@@ -67,7 +67,6 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
         
         if resp.status_code == 200:
             text = resp.json()["choices"][0]["message"]["content"]
-            # 표 렌더링 방해하는 <br> 태그 일괄 공백 치환
             text = re.sub(r'(?i)&lt;br\s*/?&gt;|<br\s*/?>', ' ', text)
             return {"status": True, "provider": provider, "model": model, "latency_ms": latency, "response": text.strip()}
         else:
@@ -115,7 +114,6 @@ def translate_to_korean_via_nvidia(text: str, api_key: str) -> tuple[bool, str]:
         if resp.status_code == 200:
             translated_text = resp.json()["choices"][0]["message"]["content"].strip()
             translated_text = translated_text.replace("美聯儲", "미 연준").replace("下次", "다음")
-            # HTML 태그 제거
             translated_text = re.sub(r'(?i)&lt;br\s*/?&gt;|<br\s*/?>', ' ', translated_text)
             return True, translated_text
         else:
@@ -153,7 +151,6 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
             if data.get("success"):
                 translated_text = data["result"]["response"].strip()
                 translated_text = translated_text.replace("美聯儲", "미 연준").replace("下次", "다음") 
-                # HTML 태그 제거
                 translated_text = re.sub(r'(?i)&lt;br\s*/?&gt;|<br\s*/?>', ' ', translated_text)
                 return translated_text, "🟡 CF Llama-3.1-8B 우회 번역 완료"
             else:
@@ -166,11 +163,11 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
 # ==========================================
 # 개별 API 테스트 함수 (4개 모델)
 # ==========================================
-def test_nvidia_nemotron(api_key: str, prompt: str, use_custom_prompt: bool = False) -> dict:
-    sys_prompt = INVESTMENT_AGENT_PROMPT if use_custom_prompt else "You are a professional financial analyst. Always respond in fluent and clear Korean. Do not include introductory or explanatory phrases."
+def test_nvidia_nemotron(api_key: str, prompt: str, system_prompt: str = None) -> dict:
+    sys_prompt = system_prompt or "You are a professional financial analyst. Always respond in fluent and clear Korean. Do not include introductory or explanatory phrases."
     return _call_openai_format("NVIDIA NIM (Nemotron)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "nvidia/nemotron-3-super-120b-a12b", prompt, system_prompt=sys_prompt, timeout=60)
 
-def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, use_custom_prompt: bool = False) -> dict:
+def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prompt: str = None) -> dict:
     model = "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
     if not account_id or not api_token:
         return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
@@ -178,8 +175,8 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, use_custom_
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
-    if use_custom_prompt:
-        enhanced_prompt = f"{INVESTMENT_AGENT_PROMPT}\n\n[중요: 모든 답변은 반드시 100% 한글로만 작성하고 한자나 중국어는 절대 섞어 쓰지 마세요.]\n\n사용자 질문: {prompt}"
+    if system_prompt:
+        enhanced_prompt = f"{system_prompt}\n\n[중요: 모든 답변은 반드시 100% 한글로만 작성하고 한자나 중국어는 절대 섞어 쓰지 마세요.]\n\n사용자 질문: {prompt}"
     else:
         enhanced_prompt = f"서론이나 부연 설명 없이, 반드시 핵심만 100% 한글로 요약해줘(한자/중국어 절대 사용 금지): {prompt}"
         
@@ -198,14 +195,11 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, use_custom_
                 if not cleaned:
                     cleaned = raw.strip()
                 
-                # HTML 태그 제거
                 cleaned = re.sub(r'(?i)&lt;br\s*/?&gt;|<br\s*/?>', ' ', cleaned)
-                
                 translation_info = "⚪ 번역 생략 (자체 한글 출력)"
                 
                 has_chinese = bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf]', cleaned)) 
                 if has_chinese or len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15:
-                    
                     nv_key = get_secret("ai.nvidia_api_key", "")
                     translated_ok = False
                     if nv_key:
@@ -234,44 +228,44 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, use_custom_
         latency = int((time.time() - start_time) * 1000)
         return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
-def test_nvidia_gpt_oss(api_key: str, prompt: str, use_custom_prompt: bool = False) -> dict:
-    sys_prompt = INVESTMENT_AGENT_PROMPT if use_custom_prompt else "You are a professional financial analyst. Always respond in fluent and clear Korean. Do not include introductory or explanatory phrases."
+def test_nvidia_gpt_oss(api_key: str, prompt: str, system_prompt: str = None) -> dict:
+    sys_prompt = system_prompt or "You are a professional financial analyst. Always respond in fluent and clear Korean. Do not include introductory or explanatory phrases."
     return _call_openai_format("NVIDIA NIM (GPT-OSS)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "openai/gpt-oss-20b", prompt, system_prompt=sys_prompt, timeout=40)
 
-def test_cerebras(api_key: str, prompt: str, use_custom_prompt: bool = False) -> dict:
-    sys_prompt = INVESTMENT_AGENT_PROMPT if use_custom_prompt else "You are a professional financial analyst. Always respond in fluent and clear Korean. Do not include introductory or explanatory phrases."
+def test_cerebras(api_key: str, prompt: str, system_prompt: str = None) -> dict:
+    sys_prompt = system_prompt or "You are a professional financial analyst. Always respond in fluent and clear Korean. Do not include introductory or explanatory phrases."
     return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt, system_prompt=sys_prompt, timeout=30)
 
 # ==========================================
 # 4단 Failover 무중단 AI 브리핑 생성 파이프라인
 # ==========================================
-def generate_ai_briefing_with_failover(prompt: str, use_custom_prompt: bool = False) -> dict:
+def generate_ai_briefing_with_failover(prompt: str, system_prompt: str = None) -> dict:
     nv_key = get_secret("ai.nvidia_api_key", "")
     cf_id = get_secret("ai.cloudflare_account_id", "")
     cf_token = get_secret("ai.cloudflare_api_token", "")
     ce_key = get_secret("ai.cerebras_api_key", "")
 
     if nv_key:
-        res = test_nvidia_nemotron(nv_key, prompt, use_custom_prompt)
+        res = test_nvidia_nemotron(nv_key, prompt, system_prompt)
         if res["status"]:
             res["pipeline_step"] = "1순위 (NVIDIA Nemotron-3) 정상 응답"
             return res
 
     if cf_id and cf_token:
-        res = test_cloudflare_ai(cf_id, cf_token, prompt, use_custom_prompt)
+        res = test_cloudflare_ai(cf_id, cf_token, prompt, system_prompt)
         if res["status"]:
             trans_msg = res.get("translation_info", "상태 없음")
             res["pipeline_step"] = f"2순위 (Cloudflare AI) Failover 성공 [{trans_msg}]"
             return res
 
     if nv_key:
-        res = test_nvidia_gpt_oss(nv_key, prompt, use_custom_prompt)
+        res = test_nvidia_gpt_oss(nv_key, prompt, system_prompt)
         if res["status"]:
             res["pipeline_step"] = "3순위 (NVIDIA GPT-OSS-20B) Failover 성공"
             return res
 
     if ce_key:
-        res = test_cerebras(ce_key, prompt, use_custom_prompt)
+        res = test_cerebras(ce_key, prompt, system_prompt)
         if res["status"]:
             res["pipeline_step"] = "4순위 (Cerebras Cloud) Failover 성공"
             return res
@@ -284,3 +278,26 @@ def generate_ai_briefing_with_failover(prompt: str, use_custom_prompt: bool = Fa
         "pipeline_step": "모든 AI 엔진 연결 실패",
         "response": "현재 모든 AI 서버가 일시적인 트래픽 폭주 또는 점검 상태입니다. 잠시 후 다시 시도해 주세요."
     }
+
+# ==========================================
+# 🚀 범용 함수: 사용자가 선택한 AI 엔진 호출
+# ==========================================
+def call_selected_ai_engine(engine_name: str, prompt: str, system_prompt: str = None) -> dict:
+    """사용자가 UI에서 선택한 엔진을 즉시 호출하는 공통 라우팅 함수"""
+    sec_nv_key = get_secret("ai.nvidia_api_key", "")
+    sec_cf_id = get_secret("ai.cloudflare_account_id", "")
+    sec_cf_token = get_secret("ai.cloudflare_api_token", "")
+    sec_ce_key = get_secret("ai.cerebras_api_key", "")
+
+    if "자동 탐색" in engine_name or "Failover" in engine_name:
+        return generate_ai_briefing_with_failover(prompt, system_prompt)
+    elif "Nemotron" in engine_name:
+        return test_nvidia_nemotron(sec_nv_key, prompt, system_prompt)
+    elif "Cloudflare" in engine_name:
+        return test_cloudflare_ai(sec_cf_id, sec_cf_token, prompt, system_prompt)
+    elif "GPT-OSS-20B" in engine_name:
+        return test_nvidia_gpt_oss(sec_nv_key, prompt, system_prompt)
+    elif "Cerebras" in engine_name:
+        return test_cerebras(sec_ce_key, prompt, system_prompt)
+    else:
+        return generate_ai_briefing_with_failover(prompt, system_prompt)
