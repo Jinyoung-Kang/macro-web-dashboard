@@ -40,6 +40,15 @@ def get_secret(key_path: str, default: str = "") -> str:
         pass
     return default
 
+def check_ollama_status() -> bool:
+    """맥북 로컬 Ollama 서버가 실행 중인지 확인하는 헬퍼 함수"""
+    try:
+        # Ollama 기본 엔드포인트에 1초 대기시간으로 가벼운 통신 시도
+        resp = requests.get("http://localhost:11434/", timeout=1)
+        return resp.status_code == 200
+    except:
+        return False
+
 def _call_openai_format(provider: str, url: str, api_key: str, model: str, prompt: str, timeout: int = 30) -> dict:
     """OpenAI 호환 API 공통 호출 내부 함수"""
     if not api_key:
@@ -94,24 +103,24 @@ def translate_smart_korean(text: str, account_id: str = "", api_token: str = "")
     )
 
     # 1. 맥북 로컬 Ollama 시도 (http://localhost:11434)
-    try:
-        ollama_url = "http://localhost:11434/v1/chat/completions"
-        ollama_payload = {
-            "model": "llama3.1",
-            "messages": [
-                {"role": "system", "content": "You are a professional financial translator. Translate English into fluent Korean accurately."},
-                {"role": "user", "content": translate_prompt}
-            ],
-            "temperature": 0.2,
-            "max_tokens": 2048
-        }
-        res_ollama = requests.post(ollama_url, json=ollama_payload, timeout=8)
-        if res_ollama.status_code == 200:
-            translated = res_ollama.json()["choices"][0]["message"]["content"].strip()
-            return translated, "🖥️ 맥북 로컬 Ollama (Llama-3.1) 무제한 번역 완료"
-    except Exception:
-        # 로컬 Ollama가 꺼져있거나 Streamlit Cloud 배포 환경일 경우 Cloudflare로 자동 전환
-        pass
+    if check_ollama_status():
+        try:
+            ollama_url = "http://localhost:11434/v1/chat/completions"
+            ollama_payload = {
+                "model": "llama3.1",
+                "messages": [
+                    {"role": "system", "content": "You are a professional financial translator. Translate English into fluent Korean accurately."},
+                    {"role": "user", "content": translate_prompt}
+                ],
+                "temperature": 0.2,
+                "max_tokens": 2048
+            }
+            res_ollama = requests.post(ollama_url, json=ollama_payload, timeout=8)
+            if res_ollama.status_code == 200:
+                translated = res_ollama.json()["choices"][0]["message"]["content"].strip()
+                return translated, "🖥️ 맥북 로컬 Ollama (Llama-3.1) 무제한 번역 완료"
+        except Exception:
+            pass
 
     # 2. Cloudflare Llama 3.1 8B 폴백 번역
     if account_id and api_token:
@@ -136,7 +145,7 @@ def translate_smart_korean(text: str, account_id: str = "", api_token: str = "")
 # 개별 API 테스트 함수
 # ==========================================
 def test_local_ollama(prompt: str) -> dict:
-    """맥북 로컬 Ollama Llama 3.1 테스트"""
+    """맥북 로컬 Ollama Llama 3.1 직접 호출 테스트"""
     url = "http://localhost:11434/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -162,7 +171,6 @@ def test_local_ollama(prompt: str) -> dict:
         return {"status": False, "provider": "Local Ollama (MacBook)", "model": "llama3.1", "latency_ms": latency, "response": f"로컬 연결 실패 (Ollama 앱 실행 여부 확인): {str(e)}"}
 
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
-    """1순위: Cloudflare DeepSeek-R1-32B + 스마트 번역 연계"""
     model = "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
     if not account_id or not api_token:
         return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
@@ -205,15 +213,12 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
         return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 def test_nvidia_nemotron(api_key: str, prompt: str) -> dict:
-    """2순위: NVIDIA Nemotron-3 Super 120B"""
     return _call_openai_format("NVIDIA NIM (Nemotron)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "nvidia/nemotron-3-super-120b-a12b", prompt, timeout=40)
 
 def test_nvidia_gpt_oss(api_key: str, prompt: str) -> dict:
-    """3순위: NVIDIA GPT-OSS-20B"""
     return _call_openai_format("NVIDIA NIM (GPT-OSS)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "openai/gpt-oss-20b", prompt, timeout=30)
 
 def test_cerebras(api_key: str, prompt: str) -> dict:
-    """4순위: Cerebras Cloud"""
     return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt, timeout=20)
 
 # ==========================================
@@ -225,7 +230,6 @@ def generate_ai_briefing_with_failover(prompt: str) -> dict:
     nv_key = get_secret("ai.nvidia_api_key", "")
     ce_key = get_secret("ai.cerebras_api_key", "")
 
-    # 1순위
     if cf_id and cf_token:
         res = test_cloudflare_ai(cf_id, cf_token, prompt)
         if res["status"]:
@@ -233,21 +237,18 @@ def generate_ai_briefing_with_failover(prompt: str) -> dict:
             res["pipeline_step"] = f"1순위 (Cloudflare AI) 정상 응답 [{trans_msg}]"
             return res
 
-    # 2순위
     if nv_key:
         res = test_nvidia_nemotron(nv_key, prompt)
         if res["status"]:
             res["pipeline_step"] = "2순위 (NVIDIA Nemotron-3) Failover 성공"
             return res
 
-    # 3순위
     if nv_key:
         res = test_nvidia_gpt_oss(nv_key, prompt)
         if res["status"]:
             res["pipeline_step"] = "3순위 (NVIDIA GPT-OSS-20B) Failover 성공"
             return res
 
-    # 4순위
     if ce_key:
         res = test_cerebras(ce_key, prompt)
         if res["status"]:
