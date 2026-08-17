@@ -81,12 +81,12 @@ def _call_openai_format(provider, url, api_key, model, prompt, timeout=30):
 # 각 플랫폼별 호출 함수 (에러 발생 모델명 전면 수정)
 # ==========================================
 def test_openrouter(api_key: str, prompt: str) -> dict:
-    # 엔드포인트가 가장 안정적으로 상시 열려있는 무료 모델로 교체
-    return _call_openai_format("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", api_key, "microsoft/phi-3-mini-128k-instruct:free", prompt)
+    # 가장 안정적인 최신 오픈모델인 openai/gpt-oss-120b 무료 버전으로 변경
+    return _call_openai_format("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", api_key, "openai/gpt-oss-120b:free", prompt)
 
 def test_cerebras(api_key: str, prompt: str) -> dict:
-    # Cerebras의 공식 지원 문자열로 수정
-    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "llama3.1-8b", prompt)
+    # Cerebras의 공식 최신 모델인 gpt-oss-120b로 수정
+    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt)
 
 def test_sambanova(api_key: str, prompt: str) -> dict:
     return _call_openai_format("SambaNova Cloud", "https://api.sambanova.ai/v1/chat/completions", api_key, "Meta-Llama-3.1-8B-Instruct", prompt)
