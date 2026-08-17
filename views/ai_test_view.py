@@ -11,27 +11,38 @@ from services.ai_service import (
 
 def render_ai_test_view():
     st.title("🤖 5대 AI API 연결 통합 테스트")
-    st.caption("OpenRouter, Cerebras, SambaNova, NVIDIA, Cloudflare의 실시간 API 연결 상태 및 지연시간(Latency)을 점검합니다.")
+    st.caption("Streamlit Cloud Secrets에 등록된 키를 바탕으로 실시간 API 연결 상태 및 지연시간(Latency)을 점검합니다.")
     st.divider()
 
-    # 1. API 키 셋업 UI
-    with st.expander("⚙️ API 인증 키 확인 및 수정", expanded=True):
+    # Secrets에서 키 자동 로드
+    sec_or_key = get_secret("ai.openrouter_api_key", "")
+    sec_ce_key = get_secret("ai.cerebras_api_key", "")
+    sec_sb_key = get_secret("ai.sambanova_api_key", "")
+    sec_nv_key = get_secret("ai.nvidia_api_key", "")
+    sec_cf_id = get_secret("ai.cloudflare_account_id", "")
+    sec_cf_token = get_secret("ai.cloudflare_api_token", "")
+
+    # 1. API 인증 상태 확인 패널
+    with st.expander("⚙️ Streamlit Secrets 인증 키 로드 상태 확인 (클릭하여 펼치기)", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown("##### 1. OpenRouter")
-            or_key = st.text_input("OpenRouter Key", value=get_secret("ai.openrouter_api_key", ""), type="password")
-            st.markdown("##### 4. NVIDIA NIM")
-            nv_key = st.text_input("NVIDIA Key", value=get_secret("ai.nvidia_api_key", ""), type="password")
+            st.markdown(f"**1. OpenRouter:** {'🟢 로드 완료' if sec_or_key else '🔴 미설정'}")
+            or_key = st.text_input("OpenRouter Key", value=sec_or_key, type="password", key="ui_or_key")
+            
+            st.markdown(f"**4. NVIDIA NIM:** {'🟢 로드 완료' if sec_nv_key else '🔴 미설정'}")
+            nv_key = st.text_input("NVIDIA Key", value=sec_nv_key, type="password", key="ui_nv_key")
+            
         with c2:
-            st.markdown("##### 2. Cerebras")
-            ce_key = st.text_input("Cerebras Key", value=get_secret("ai.cerebras_api_key", ""), type="password")
-            st.markdown("##### 5. Cloudflare")
-            cf_id = st.text_input("CF Account ID (영문/숫자 32자리)", value=get_secret("ai.cloudflare_account_id", ""))
-            cf_token = st.text_input("CF API Token (Workers AI 권한)", value=get_secret("ai.cloudflare_api_token", ""), type="password")
+            st.markdown(f"**2. Cerebras:** {'🟢 로드 완료' if sec_ce_key else '🔴 미설정'}")
+            ce_key = st.text_input("Cerebras Key", value=sec_ce_key, type="password", key="ui_ce_key")
+            
+            st.markdown(f"**5. Cloudflare:** {'🟢 로드 완료' if (sec_cf_id and sec_cf_token) else '🔴 미설정'}")
+            cf_id = st.text_input("CF Account ID (32자리)", value=sec_cf_id, key="ui_cf_id")
+            cf_token = st.text_input("CF API Token", value=sec_cf_token, type="password", key="ui_cf_token")
+            
         with c3:
-            st.markdown("##### 3. SambaNova")
-            st.caption("※ SambaNova는 사이트에서 카드 등록 필요 (무료)")
-            sb_key = st.text_input("SambaNova Key", value=get_secret("ai.sambanova_api_key", ""), type="password")
+            st.markdown(f"**3. SambaNova:** {'🟢 로드 완료' if sec_sb_key else '🔴 미설정'}")
+            sb_key = st.text_input("SambaNova Key", value=sec_sb_key, type="password", key="ui_sb_key")
 
     test_prompt = st.text_input(
         "테스트 질문 프롬프트", 
@@ -39,32 +50,41 @@ def render_ai_test_view():
     )
     st.write("")
     
+    # 2. 테스트 실행
     if st.button("🚀 5대 AI API 전체 일괄 연결 테스트 실행", type="primary", use_container_width=True):
         st.subheader("📊 테스트 결과")
         
+        # 입력창의 값 또는 Secrets 값 자동 바인딩
+        final_or = or_key or sec_or_key
+        final_ce = ce_key or sec_ce_key
+        final_sb = sb_key or sec_sb_key
+        final_nv = nv_key or sec_nv_key
+        final_cf_id = cf_id or sec_cf_id
+        final_cf_token = cf_token or sec_cf_token
+
         results = {}
         
         with st.status("AI 엔진 릴레이 테스트 진행 중...", expanded=True) as status:
             st.write("1/5. OpenRouter 호출 중...")
-            results["OpenRouter"] = test_openrouter(or_key, test_prompt)
+            results["OpenRouter"] = test_openrouter(final_or, test_prompt)
             
             st.write("2/5. Cerebras 호출 중...")
-            results["Cerebras"] = test_cerebras(ce_key, test_prompt)
+            results["Cerebras"] = test_cerebras(final_ce, test_prompt)
             
             st.write("3/5. SambaNova 호출 중...")
-            results["SambaNova"] = test_sambanova(sb_key, test_prompt)
+            results["SambaNova"] = test_sambanova(final_sb, test_prompt)
             
             st.write("4/5. NVIDIA NIM 호출 중...")
-            results["NVIDIA"] = test_nvidia_nim(nv_key, test_prompt)
+            results["NVIDIA"] = test_nvidia_nim(final_nv, test_prompt)
             
             st.write("5/5. Cloudflare AI 호출 중...")
-            results["Cloudflare"] = test_cloudflare_ai(cf_id, cf_token, test_prompt)
+            results["Cloudflare"] = test_cloudflare_ai(final_cf_id, final_cf_token, test_prompt)
             
             status.update(label="✅ 모든 API 테스트 완료!", state="complete")
             
         st.divider()
 
-        # 결과 카드 출력 (3열 배치)
+        # 3. 결과 카드 출력
         cols = st.columns(3)
         for i, (name, res) in enumerate(results.items()):
             with cols[i % 3]:
