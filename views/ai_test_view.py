@@ -13,7 +13,6 @@ def render_ai_test_view():
     st.caption("Cerebras Cloud, Cloudflare Workers AI, NVIDIA NIM 3대 인프라의 연결 상태와 무중단 Failover 파이프라인을 검증합니다.")
     st.divider()
 
-    # 1. API 키 상태 로드
     sec_ce_key = get_secret("ai.cerebras_api_key", "")
     sec_cf_id = get_secret("ai.cloudflare_account_id", "")
     sec_cf_token = get_secret("ai.cloudflare_api_token", "")
@@ -44,7 +43,6 @@ def render_ai_test_view():
     with col_btn2:
         run_failover = st.button("🛡️ 3단 Failover 무중단 파이프라인 실행", type="primary", use_container_width=True)
 
-    # 2-A. 개별 연결 상태 점검
     if run_individual:
         st.subheader("📊 개별 API 연결 테스트 결과")
         final_ce = ce_key or sec_ce_key
@@ -57,7 +55,7 @@ def render_ai_test_view():
             st.write("1/3. Cerebras (GPT-OSS-120B) 호출 중...")
             results["1순위: Cerebras Cloud"] = test_cerebras(final_ce, test_prompt)
             
-            st.write("2/3. Cloudflare (Llama-3.1-8B) 호출 중...")
+            st.write("2/3. Cloudflare (DeepSeek-R1-32B) 호출 중...")
             results["2순위: Cloudflare Workers AI"] = test_cloudflare_ai(final_cf_id, final_cf_token, test_prompt)
             
             st.write("3/3. NVIDIA NIM (Llama-3.1-8B) 호출 중...")
@@ -77,7 +75,6 @@ def render_ai_test_view():
                     st.error("🔴 호출 실패")
                     st.caption(res["response"])
 
-    # 2-B. Failover 자동 우회 파이프라인 시뮬레이션
     if run_failover:
         st.subheader("🛡️ Failover 파이프라인 실제 응답 결과")
         with st.spinner("최적의 AI 엔진을 탐색하여 브리핑을 생성하는 중..."):
