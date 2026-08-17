@@ -43,7 +43,7 @@ def get_secret(key_path: str, default: str = "") -> str:
 def _call_openai_format(provider: str, url: str, api_key: str, model: str, prompt: str, timeout: int = 30) -> dict:
     """OpenAI 호환 API 공통 호출 내부 함수"""
     if not api_key:
-        return {"status": False, "provider": provider, "model": model, "latency_ms": 0, "response": "API 키 누락"}
+        return {"status": False, "provider": provider, "model": model, "latency_ms": 0, "response": "API 키가 누락되었습니다."}
     
     headers = {
         "Authorization": f"Bearer {api_key}", 
@@ -77,20 +77,20 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
         return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 # ==========================================
-# 헬퍼 함수: Cloudflare Llama-3.1-8b를 이용한 고품질 한글 번역
+# 헬퍼 함수: Cloudflare Llama-3.1-8B를 이용한 고품질 한글 번역
 # ==========================================
 def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: str) -> tuple[str, str]:
-    """Cloudflare Llama 3.1-8b 모델을 이용해 영어 텍스트를 자연스러운 한국어로 번역"""
+    """Cloudflare Llama 3.1 8B 모델을 이용해 영어 텍스트를 자연스러운 한국어로 번역"""
     if not account_id or not api_token or not text:
         return text, "🔴 번역 불가 (인증키 누락)"
 
-    # Llama 3.2 3B Instruct 모델 사용 (빠르고 번역 품질 우수)
+    # Llama 3.1 8B Instruct 모델 사용
     model = "@cf/meta/llama-3.1-8b-instruct"
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
     translate_prompt = (
-        "다음 텍스트를 금융 전문가의 어조로 자연스럽고 매끄러운 한국어로 번역해. "
+        "다음 텍스트를 전문가의 어조로 자연스럽고 매끄러운 한국어로 번역해. "
         "다른 군더더기 설명이나 인사말 없이 번역된 결과만 정확하게 출력해:\n\n"
         f"{text}"
     )
@@ -103,7 +103,7 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
             data = resp.json()
             if data.get("success"):
                 translated_text = data["result"]["response"].strip()
-                return translated_text, "🟢 Llama-3.2-3B 한글 번역 보정 완료"
+                return translated_text, "🟢 Llama-3.1-8B 한글 번역 보정 완료"
             else:
                 return text, f"🔴 번역 API 실패: {data.get('errors')}"
         else:
@@ -115,10 +115,10 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
 # 개별 API 테스트 함수 (4개 모델)
 # ==========================================
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
-    """1순위: Cloudflare DeepSeek-R1-32B + Llama 3.2 3B 번역 연계"""
+    """1순위: Cloudflare DeepSeek-R1-32B + Llama 3.1 8B 번역 연계"""
     model = "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
     if not account_id or not api_token:
-        return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
+        return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
 
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
@@ -138,7 +138,7 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
                     cleaned = raw.strip()
                 
                 translation_info = "⚪ 번역 생략 (자체 한글 출력)"
-                # 한글 글자 수가 15자 미만이면 Llama 3.2 3B 번역기 가동
+                # 한글 글자 수가 15자 미만이면 Llama 3.1 8B 번역기 가동
                 if len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15:
                     cleaned, translation_info = translate_to_korean_via_cloudflare(cleaned, account_id, api_token)
 
