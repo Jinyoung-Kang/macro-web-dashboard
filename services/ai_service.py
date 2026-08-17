@@ -4,13 +4,12 @@ import requests
 import streamlit as st
 
 def get_secret(key_path: str, default: str = "") -> str:
-    """Streamlit Cloud Settings 및 로컬 secrets.toml에서 안전하게 키를 추출하는 헬퍼 함수"""
+    """Streamlit Cloud Settings 및 secrets.toml에서 안전하게 키를 추출하는 헬퍼 함수"""
     try:
         if not hasattr(st, "secrets") or not st.secrets:
             return default
 
         keys = key_path.split(".")
-        
         val = st.secrets
         found = True
         for k in keys:
@@ -40,22 +39,20 @@ def get_secret(key_path: str, default: str = "") -> str:
         pass
     return default
 
-def _call_openai_format(provider, url, api_key, model, prompt, timeout=30):
-    """OpenAI 호환 API 공통 호출 함수"""
+def _call_openai_format(provider: str, url: str, api_key: str, model: str, prompt: str, timeout: int = 30) -> dict:
+    """OpenAI 호환 API 공통 호출 내부 함수"""
     if not api_key:
-        return {"status": False, "provider": provider, "model": model, "latency_ms": 0, "response": "API 키가 누락되었습니다. (Streamlit 설정의 Secrets를 확인하세요)"}
+        return {"status": False, "provider": provider, "model": model, "latency_ms": 0, "response": "API 키가 누락되었습니다."}
     
     headers = {
         "Authorization": f"Bearer {api_key}", 
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://streamlit.io",
-        "X-Title": "Macro Web Dashboard"
+        "Content-Type": "application/json"
     }
     payload = {
         "model": model, 
         "messages": [{"role": "user", "content": prompt}], 
         "temperature": 0.2, 
-        "max_tokens": 300
+        "max_tokens": 400
     }
     
     start_time = time.time()
@@ -66,8 +63,6 @@ def _call_openai_format(provider, url, api_key, model, prompt, timeout=30):
         if resp.status_code == 200:
             text = resp.json()["choices"][0]["message"]["content"]
             return {"status": True, "provider": provider, "model": model, "latency_ms": latency, "response": text.strip()}
-        elif resp.status_code == 402:
-            return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": "HTTP 402: 결제 수단 등록이 필요합니다."}
         else:
             return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
     except requests.exceptions.Timeout:
@@ -78,21 +73,10 @@ def _call_openai_format(provider, url, api_key, model, prompt, timeout=30):
         return {"status": False, "provider": provider, "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 # ==========================================
-# 각 플랫폼별 호출 함수 (에러 발생 모델명 전면 수정)
+# 1. 개별 API 호출/테스트 함수 (3대 엔진)
 # ==========================================
-def test_openrouter(api_key: str, prompt: str) -> dict:
-    # 가장 안정적인 최신 오픈모델인 openai/gpt-oss-120b 무료 버전으로 변경
-    return _call_openai_format("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", api_key, "openai/gpt-oss-120b:free", prompt)
-
 def test_cerebras(api_key: str, prompt: str) -> dict:
-    # Cerebras의 공식 최신 모델인 gpt-oss-120b로 수정
-    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt)
-
-def test_sambanova(api_key: str, prompt: str) -> dict:
-    return _call_openai_format("SambaNova Cloud", "https://api.sambanova.ai/v1/chat/completions", api_key, "Meta-Llama-3.1-8B-Instruct", prompt)
-
-def test_nvidia_nim(api_key: str, prompt: str) -> dict:
-    return _call_openai_format("NVIDIA NIM", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "meta/llama-3.1-8b-instruct", prompt, timeout=60)
+    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt, timeout=20)
 
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
     model = "@cf/meta/llama-3.1-8b-instruct"
@@ -114,10 +98,55 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str) -> dict:
                 return {"status": True, "provider": "Cloudflare", "model": model, "latency_ms": latency, "response": data["result"]["response"].strip()}
             else:
                 return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": latency, "response": f"API Error: {data.get('errors')}"}
-        elif resp.status_code == 401:
-            return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": latency, "response": "HTTP 401: 인증 실패. Cloudflare API 토큰 권한을 확인하세요."}
         else:
             return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
     except Exception as e:
         latency = int((time.time() - start_time) * 1000)
         return {"status": False, "provider": "Cloudflare", "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
+
+def test_nvidia_nim(api_key: str, prompt: str) -> dict:
+    return _call_openai_format("NVIDIA NIM", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "meta/llama-3.1-8b-instruct", prompt, timeout=40)
+
+# ==========================================
+# 2. 3단 Failover 무중단 AI 브리핑 생성 파이프라인
+# ==========================================
+def generate_ai_briefing_with_failover(prompt: str) -> dict:
+    """
+    Cerebras (1순위) -> Cloudflare (2순위) -> NVIDIA NIM (3순위)
+    순서대로 시도하며 첫 번째 성공 응답을 즉시 반환하는 무중단 Failover 엔진
+    """
+    ce_key = get_secret("ai.cerebras_api_key", "")
+    cf_id = get_secret("ai.cloudflare_account_id", "")
+    cf_token = get_secret("ai.cloudflare_api_token", "")
+    nv_key = get_secret("ai.nvidia_api_key", "")
+
+    # 1순위: Cerebras (초고속 엔진)
+    if ce_key:
+        res = test_cerebras(ce_key, prompt)
+        if res["status"]:
+            res["pipeline_step"] = "1순위 (Cerebras Cloud) 정상 응답"
+            return res
+
+    # 2순위: Cloudflare Workers AI (글로벌 엣지 백업)
+    if cf_id and cf_token:
+        res = test_cloudflare_ai(cf_id, cf_token, prompt)
+        if res["status"]:
+            res["pipeline_step"] = "2순위 (Cloudflare Workers AI) Failover 우회 성공"
+            return res
+
+    # 3순위: NVIDIA NIM (최종 비상 백업)
+    if nv_key:
+        res = test_nvidia_nim(nv_key, prompt)
+        if res["status"]:
+            res["pipeline_step"] = "3순위 (NVIDIA NIM) Failover 우회 성공"
+            return res
+
+    # 모든 엔진 실패 시 Graceful Fallback
+    return {
+        "status": False,
+        "provider": "None",
+        "model": "Fallback",
+        "latency_ms": 0,
+        "pipeline_step": "모든 AI 엔진 연결 실패",
+        "response": "현재 모든 AI 서버가 일시적인 트래픽 폭주 또는 점검 상태입니다. 잠시 후 다시 새로고침해 주세요."
+    }
