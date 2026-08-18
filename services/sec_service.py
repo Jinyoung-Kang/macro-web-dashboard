@@ -1,33 +1,70 @@
-# services/sec_service.py
-import requests
-import pandas as pd
-from bs4 import BeautifulSoup
+"""
+services/sec_service.py
+SEC EDGAR 13F-HR 공시 데이터 수집 및 기관 포트폴리오 분석 엔진
+(강력한 Session + Retry 기반 SEC 통신 타임아웃 방어 엔진 탑재)
+"""
+import logging
 import re
-import xml.etree.ElementTree as ET
-import streamlit as st
 import time
+import xml.etree.ElementTree as ET
+import pandas as pd
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from bs4 import BeautifulSoup
+import streamlit as st
 from config import INSTITUTIONS
 
-@st.cache_data(ttl=86400)
-def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
-    """
-    최대 max_quarters 분기만큼의 13F 공시를 역순으로 수집하여
-    [(df, meta_info), (df_prev, meta_info_prev), ...] 형태로 반환
-    """
-    base_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=13F-HR&dateb=&owner=exclude&count=20"
+logger = logging.getLogger(__name__)
+
+# ==============================================================================
+# 1. SEC 전용 강행 돌파 통신 세션 설정 (Timeout, Rate Limit 완벽 방어)
+# ==============================================================================
+def get_sec_session() -> requests.Session:
+    """SEC EDGAR의 엄격한 연결 끊김 현상을 방어하기 위한 강력한 세션 생성기"""
+    session = requests.Session()
     
-    # [수정1] SEC 공식 가이드라인 헤더 강제 지정 (단순 IP 차단 및 Timeout 에러 방어)
-    headers = {
-        "User-Agent": "MacroDashboard/2.0 (contact@macrodashboard.com) Mozilla/5.0",
+    # SEC 공식 가이드라인 규격 헤더 (필수)
+    session.headers.update({
+        "User-Agent": "MacroQuantResearchApp/3.0 (admin@macroquant.com)",
         "Accept-Encoding": "gzip, deflate",
         "Host": "www.sec.gov"
-    }
+    })
+    
+    # 타임아웃(Read timed out) 및 접속 거부 시 최대 5회 기하급수적 재시도(Exponential Backoff)
+    retries = Retry(
+        total=5,
+        backoff_factor=1.5, # 1.5s, 3s, 6s... 간격으로 대기 후 재시도
+        status_forcelist=[403, 408, 429, 500, 502, 503, 504],
+        allowed_methods=["GET"]
+    )
+    
+    adapter = HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=10)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    
+    return session
+
+
+# ==============================================================================
+# 2. 통합 13F 분기 데이터 크롤러 (실제 달러 단위 자동 판별)
+# ==============================================================================
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
+    """
+    최대 max_quarters 분기만큼의 13F 공시를 수집하여
+    [(df, meta_info), (df_prev, meta_info_prev), ...] 형태로 반환
+    """
+    clean_cik = str(cik).lstrip("0")
+    base_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={clean_cik}&type=13F-HR&dateb=&owner=exclude&count=20"
+    
+    session = get_sec_session()
 
     try:
-        res = requests.get(base_url, headers=headers, timeout=15)
+        res = session.get(base_url, timeout=30)
         res.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        return None, f"SEC EDGAR 연결 실패: {str(e)}"
+    except Exception as e:
+        return None, f"SEC EDGAR 연결 실패 (서버 점검 또는 지연): {str(e)}"
 
     soup = BeautifulSoup(res.text, "html.parser")
     tables = soup.find_all("table", class_="tableFile2")
@@ -57,10 +94,11 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
     all_results = []
     for filing_date, doc_url in history_links:
         try:
-            time.sleep(0.15) # SEC API 초당 호출 횟수 제한(Rate Limit) 우회
-            doc_res = requests.get(doc_url, headers=headers, timeout=15)
+            time.sleep(0.15) # SEC API 초당 호출 횟수 제한(Rate Limit) 준수
+            doc_res = session.get(doc_url, timeout=30)
             doc_res.raise_for_status()
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
+            logger.warning(f"13F 문서 페이지 접근 실패 ({filing_date}): {e}")
             continue
 
         doc_soup = BeautifulSoup(doc_res.text, "html.parser")
@@ -85,9 +123,10 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
 
         try:
             time.sleep(0.15)
-            xml_res = requests.get(xml_url, headers=headers, timeout=20)
+            xml_res = session.get(xml_url, timeout=30)
             xml_res.raise_for_status()
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
+            logger.warning(f"13F XML 파싱 타임아웃 ({filing_date}): {e}")
             continue
 
         root = ET.fromstring(xml_res.content)
@@ -107,8 +146,7 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
                 if shamt is not None:
                     shares = float(shamt.text)
             
-            # [수정2] 2023년 이후 SEC 13F XML의 Value는 실제 달러(Exact USD) 단위임.
-            # 과거의 천 달러 기준 곱하기(* 1000)를 삭제하여 AUM이 1,000배 부풀려지는 현상 방지.[cite: 22]
+            # 2023년 이후 SEC 13F XML의 Value는 '실제 달러(Exact USD)' 단위
             try:
                 val = float(val_text)
             except ValueError:
@@ -127,18 +165,18 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
 
         df = pd.DataFrame(data)
         
-        # [스마트 보정] 총 자산이 $100M(13F 최소 신고액) 미만이면, 과거 천 달러 축약본으로 간주하고 * 1000 복원[cite: 22]
+        # [스마트 스케일러] 2023년 이전 공시 파일이거나 AUM이 비정상적으로 $100M 미만이면 '천 달러 단위'로 간주하고 1000 곱하기 복원
         if df['value'].sum() > 0 and df['value'].sum() < 100_000_000:
             df['value'] = df['value'] * 1000.0
             
-        # 종목명(CUSIP 기준)으로 그룹화하여 옵션/본주 분산 표기 합산[cite: 22]
+        # 종목명(CUSIP 기준)으로 그룹화하여 옵션/본주 분산 표기 합산
         df = df.groupby(['name', 'cusip', 'class'], as_index=False).agg({'value':'sum', 'shares':'sum'})
         df = df.sort_values(by='value', ascending=False).reset_index(drop=True)
         
         total_aum = df['value'].sum()
         df['weight'] = (df['value'] / total_aum) * 100
 
-        # 대략적인 Report Date 추정 (Filing date에서 가장 가까운 직전 분기말)[cite: 22]
+        # 대략적인 Report Date 추정 (Filing date에서 가장 가까운 직전 분기말)
         fd_dt = pd.to_datetime(filing_date)
         year = fd_dt.year
         month = fd_dt.month
@@ -160,6 +198,7 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
 
     return all_results, None
 
+
 def classify_qoq_action(row):
     """직전 분기 대비 비중 증감폭을 기준으로 매수/매도/유지 액션 분류"""
     diff = row['weight_diff']
@@ -177,6 +216,7 @@ def classify_qoq_action(row):
     else:
         return "⚪ 유지 (Unchanged)"
 
+
 def format_currency(val):
     if val >= 1e9:
         return f"${val/1e9:,.2f}B"
@@ -185,11 +225,11 @@ def format_currency(val):
     else:
         return f"${val:,.0f}"
 
-# ==========================================
-# 🆕 Consensus (교집합) 분석용 헬퍼 함수
-# ==========================================
 
-@st.cache_data(ttl=86400)
+# ==============================================================================
+# 3. Consensus (교집합) 분석용 헬퍼 함수
+# ==============================================================================
+@st.cache_data(ttl=86400, show_spinner=False)
 def load_all_institutions_data():
     """등록된 모든 기관의 가장 최신 분기 13F 데이터를 일괄 수집하여 딕셔너리로 반환"""
     data = {}
@@ -201,8 +241,9 @@ def load_all_institutions_data():
                 'df': df,
                 'meta': meta
             }
-        time.sleep(0.2) # SEC API 밴 방지 (Rate Limit)[cite: 22]
+        time.sleep(0.15) # SEC API 밴 방지 (Rate Limit)
     return data
+
 
 def calculate_consensus(inst_data):
     """
@@ -219,11 +260,11 @@ def calculate_consensus(inst_data):
         df = data['df'].copy()
         df['Institution'] = inst_name
         
-        # 종목명 전처리 (불필요한 공백, INC, CORP 등 제거하여 매칭 확률 높임)[cite: 22]
+        # 종목명 전처리 (불필요한 공백, INC, CORP 등 제거하여 매칭 확률 높임)
         df['Name_Clean'] = df['name'].str.upper().str.replace(r'\b(INC|CORP|LLC|LTD|PLC|COMPANY|CO)\b', '', regex=True)
         df['Name_Clean'] = df['Name_Clean'].str.replace(r'[^\w\s]', '', regex=True).str.strip()
         
-        # 각 기관별 상위 100개 종목만 추출 (꼬리 종목 노이즈 제거)[cite: 22]
+        # 각 기관별 상위 100개 종목만 추출 (꼬리 종목 노이즈 제거)
         df = df.head(100)
         
         for _, row in df.iterrows():
@@ -241,7 +282,7 @@ def calculate_consensus(inst_data):
     if holdings_df.empty:
         return pd.DataFrame()
 
-    # 3. 'Name_Clean' 기준으로 그룹화하여 교집합 계산[cite: 22]
+    # 3. 'Name_Clean' 기준으로 그룹화하여 교집합 계산
     consensus = holdings_df.groupby('Name_Clean').agg(
         Name=('Name', 'first'),          # 원래 이름 1개 가져오기
         Ticker=('Ticker', 'first'),
@@ -258,6 +299,7 @@ def calculate_consensus(inst_data):
     consensus = consensus.drop(columns=['Name_Clean'])
 
     return consensus
+
 
 def get_top_holdings_by_inst(inst_data, inst_name, top_n=20):
     """특정 기관의 상위 N개 보유 종목 데이터를 보기 좋게 포맷팅하여 반환"""
