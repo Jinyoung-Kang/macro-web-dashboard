@@ -1,7 +1,9 @@
 """
 services/radar_service.py
 실시간 투자자별(외인/기관/개인/연기금) 수급 스캐닝 및 30영업일 영점조정 누적 수급 계산 모듈
-LS API -> KIS API -> 네이버 모바일 API 순차 시도 (모의 데이터 미사용)
+1순위: KRX OPEN API (공식 원장)
+2순위: KIS API (증권사 TR)
+3순위: Daum 금융 실시간 순매수/순매도 REST API
 """
 import logging
 import re
@@ -11,75 +13,122 @@ import pandas as pd
 import requests
 import streamlit as st
 import yfinance as yf
-from services.ls_service import call_ls_api
+from config import get_krx_key, KRX_BASE_URL
 from services.kis_service import call_kis_api
 
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# 1. LS증권 OpenAPI (t1664: 당일매매속보)
+# 1. KRX OPEN API (1순위: 거래소 공식 투자자별 순매수/순매도 데이터)
 # ==============================================================================
-def fetch_ls_deal_ranking(market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
-    gubun1 = "1" if "KOSPI" in market.upper() or "코스피" in market else "2"
-    inv_map = {"외국인": "1", "기관": "2", "개인": "3", "연기금": "2", "금융투자": "2", "투신": "2"}
-    gubun2 = inv_map.get(investor, "1")
-    gubun3 = "1" if trade_type == "순매수" else "2"
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_krx_investor_ranking(market: str = "KOSPI", investor: str = "외국인", trade_type: str = "순매수", top_n: int = 30) -> pd.DataFrame:
+    """
+    KRX OPEN API: 종목별 투자자 순매수/순매도 실적 집계
+    """
+    auth_key = get_krx_key()
+    if not auth_key:
+        return pd.DataFrame()
 
-    body_params = {
-        "t1664InBlock": {
-            "gubun1": gubun1,
-            "gubun2": gubun2,
-            "gubun3": gubun3,
-            "cnt": top_n
-        }
-    }
+    today = datetime.now(ZoneInfo("Asia/Seoul"))
+    # 최근 평일 날짜 탐색
+    curr = today
+    while curr.weekday() >= 5:
+        curr -= timedelta(days=1)
+    bas_dd = curr.strftime("%Y%m%d")
+
+    mkt_id = "STK" if "KOSPI" in market.upper() or "코스피" in market else "KSQ"
+    
+    # KRX 주식 매매실적 엔드포인트
+    url = f"{KRX_BASE_URL}/sto/stk_bydd_trd"
+    headers = {"AUTH_KEY": auth_key, "User-Agent": "Mozilla/5.0"}
+    params = {"basDd": bas_dd, "mktId": mkt_id}
 
     try:
-        res = call_ls_api(tr_cd="t1664", tr_url="/stock/investor", body_params=body_params)
-        if res and "t1664OutBlock1" in res:
-            data_list = res["t1664OutBlock1"]
-            if not data_list:
-                return pd.DataFrame()
-                
-            records = []
-            rank = 1
-            for row in data_list:
-                code = row.get("shcode", "")
-                name = row.get("hname", "")
-                price = float(row.get("price", 0))
-                change_pct = float(row.get("diff", 0))
-                vol = float(row.get("volume", 0))
-                net_amt_eok = round((vol * price) / 100000000.0, 1)
-                
-                if trade_type == "순매도":
-                    net_amt_eok = -abs(net_amt_eok)
-                mcap_est = max(price * 1000, 500)
+        res = requests.get(url, headers=headers, params=params, timeout=8)
+        if res.status_code == 200:
+            data = res.json()
+            items = []
+            if isinstance(data, dict):
+                for k in ["OutBlock_1", "output", "block1", "items"]:
+                    if k in data and isinstance(data[k], list) and len(data[k]) > 0:
+                        items = data[k]
+                        break
+                if not items:
+                    for v in data.values():
+                        if isinstance(v, list) and len(v) > 0 and isinstance(v[0], dict):
+                            items = v
+                            break
 
-                records.append({
-                    "순위": rank, "종목코드": code, "종목명": name, "현재가": price,
-                    "등락률(%)": change_pct, "순매수대금(억)": net_amt_eok, "시가총액_가중": mcap_est, "데이터_출처": "LS증권 OpenAPI (t1664)"
-                })
-                rank += 1
-                if rank > top_n: break
-            return pd.DataFrame(records)
+            if items:
+                df = pd.DataFrame(items)
+                cols = {c.upper(): c for c in df.columns}
+                
+                # 수급 컬럼 식별
+                code_col = cols.get("ISU_CD", cols.get("ISU_SRT_CD", cols.get("SHCODE", "")))
+                name_col = cols.get("ISU_NM", cols.get("ISU_ABBRV", cols.get("HNAME", "")))
+                price_col = cols.get("TDD_CLSPRC", cols.get("CLSPRC", ""))
+                fluc_col = cols.get("FLUC_RT", "")
+                
+                # 투자자별 순매수대금 컬럼 탐색 (기본: TRD_AMT 또는 NETBID_AMT)
+                net_col = cols.get("NETBID_AMT", cols.get("TRD_VAL", cols.get("NET_AMT", "")))
+
+                if name_col and price_col and net_col:
+                    def safe_float(v):
+                        try:
+                            return float(str(v).replace(",", "").strip())
+                        except:
+                            return 0.0
+
+                    records = []
+                    for _, r in df.iterrows():
+                        code = str(r.get(code_col, "")).strip()
+                        name = str(r.get(name_col, "")).strip()
+                        price = safe_float(r.get(price_col, 0))
+                        fluc = safe_float(r.get(fluc_col, 0))
+                        amt_eok = round(safe_float(r.get(net_col, 0)) / 100000000.0, 1)
+
+                        if price > 0 and name:
+                            records.append({
+                                "종목코드": code,
+                                "종목명": name,
+                                "현재가": price,
+                                "등락률(%)": fluc,
+                                "순매수대금(억)": amt_eok,
+                                "시가총액_가중": price * 1000,
+                                "데이터_출처": "KRX OPEN API (공식)"
+                            })
+
+                    if records:
+                        res_df = pd.DataFrame(records)
+                        # 순매수: 양수 큰 순 / 순매도: 음수 작은 순(절대값 큰 순)
+                        if trade_type == "순매수":
+                            res_df = res_df[res_df["순매수대금(억)"] > 0].sort_values("순매수대금(억)", ascending=False)
+                        else:
+                            res_df = res_df[res_df["순매수대금(억)"] < 0].sort_values("순매수대금(억)", ascending=True)
+
+                        res_df = res_df.head(top_n).reset_index(drop=True)
+                        res_df["순위"] = range(1, len(res_df) + 1)
+                        return res_df
     except Exception as e:
-        logger.warning(f"LS API 호출 실패: {e}")
+        logger.warning(f"KRX Open API 주식 수급 조회 실패: {e}")
     return pd.DataFrame()
 
 
 # ==============================================================================
-# 2. 한국투자증권(KIS) API (FHPST01710000: 종목조건검색/순매수상위)
+# 2. 한국투자증권(KIS) API (2순위: 순매수/순매도 구분 TR)
 # ==============================================================================
 def fetch_kis_deal_ranking(market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
-    # KIS 투자자 매매상위 TR 연동 시도
     mrkt_div = "J" if "KOSPI" in market.upper() or "코스피" in market else "Q"
-    inv_code = "9000" if investor == "외국인" else "7000"
+    # 순매수(0) vs 순매도(1) 정밀 파라미터 분기
+    rank_sort = "0" if trade_type == "순매수" else "1"
     
     params = {
         "FID_COND_MRKT_DIV_CODE": mrkt_div,
         "FID_COND_SCR_DIV_CODE": "16449",
         "FID_INPUT_ISCD": "0000",
         "FID_DIV_CLS_CODE": "0",
+        "FID_RANK_SORT_CLS_CODE": rank_sort,
         "FID_BLNG_CLS_CODE": "0",
         "FID_TRGT_CLS_CODE": "111111111",
         "FID_TRGT_EXLS_CLS_CODE": "000000",
@@ -102,8 +151,8 @@ def fetch_kis_deal_ranking(market: str, investor: str, trade_type: str, top_n: i
                     change_pct = float(row.get("prdy_ctrt", 0))
                     amt = float(row.get("frgn_pure_bysum", 0)) if investor == "외국인" else float(row.get("organ_pure_bysum", 0))
                     amt_eok = round(amt / 100000000.0, 1)
-                    if trade_type == "순매도":
-                        amt_eok = -abs(amt_eok)
+                    if trade_type == "순매도" and amt_eok > 0:
+                        amt_eok = -amt_eok
                         
                     records.append({
                         "순위": idx, "종목코드": code, "종목명": name, "현재가": price,
@@ -116,73 +165,100 @@ def fetch_kis_deal_ranking(market: str, investor: str, trade_type: str, top_n: i
 
 
 # ==============================================================================
-# 3. 네이버 모바일 JSON API (클라우드 WAF 우회)
+# 3. Daum 금융 실시간 투자자별 순매수/순매도 REST API (3순위: 확실한 분리)
 # ==============================================================================
-def fetch_naver_mobile_ranking(market: str = "KOSPI", investor: str = "외국인", trade_type: str = "순매수", top_n: int = 30) -> pd.DataFrame:
-    sosok = "01" if "KOSPI" in market.upper() or "코스피" in market else "02"
-    inv_map = {"외국인": "9000", "기관": "7000", "개인": "1000", "연기금": "6000", "금융투자": "2000", "투신": "3000"}
-    inv_code = inv_map.get(investor, "9000")
-    if trade_type == "순매도":
-        inv_code = str(int(inv_code) + 100)
-
-    url = f"https://m.stock.naver.com/api/stocks/marketValue/{'KOSPI' if sosok == '01' else 'KOSDAQ'}?page=1&pageSize={top_n}"
+def fetch_daum_deal_ranking(market: str = "KOSPI", investor: str = "외국인", trade_type: str = "순매수", top_n: int = 30) -> pd.DataFrame:
+    """
+    Daum 금융 공식 순매수/순매도 분리 REST API (JSON)
+    """
+    market_param = "KOSPI" if "KOSPI" in market.upper() or "코스피" in market else "KOSDAQ"
+    
+    inv_map = {
+        "외국인": "FOREIGN",
+        "기관": "INSTITUTION",
+        "연기금": "PENSION",
+        "금융투자": "FINANCIAL",
+        "투신": "TRUST",
+        "개인": "INDIVIDUAL"
+    }
+    inv_param = inv_map.get(investor, "FOREIGN")
+    
+    # 엔드포인트 완벽 분리: top_net_buyers vs top_net_sellers
+    action = "top_net_buyers" if trade_type == "순매수" else "top_net_sellers"
+    url = f"https://finance.daum.net/api/trend/investors/{action}?market={market_param}&investorType={inv_param}"
+    
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
-        "Referer": "https://m.stock.naver.com/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://finance.daum.net/trend/investors",
+        "Accept": "application/json, text/plain, */*"
     }
 
     try:
         resp = requests.get(url, headers=headers, timeout=6)
         if resp.status_code == 200:
             data = resp.json()
-            stocks = data.get("stocks", [])
-            if stocks:
+            items = data.get("data", [])
+            if items:
                 records = []
-                for idx, item in enumerate(stocks[:top_n], start=1):
-                    code = item.get("itemCode", "")
-                    name = item.get("stockName", "")
-                    price = float(str(item.get("closePrice", "0")).replace(",", ""))
-                    change_pct = float(str(item.get("fluctuationsRatio", "0")).replace(",", ""))
-                    # 대형주 시총 비례 수급 추정치
-                    amt_eok = round(float(str(item.get("marketValue", "1000")).replace(",", "")) * 0.0008, 1)
-                    if trade_type == "순매도": amt_eok = -amt_eok
+                for idx, row in enumerate(items[:top_n], start=1):
+                    raw_code = row.get("symbolCode", "")
+                    code = raw_code.replace("A", "")
+                    name = row.get("name", "")
+                    price = float(row.get("tradePrice", 0))
+                    change_pct = float(row.get("changeRate", 0)) * 100.0
                     
+                    # 순매수/순매도 대금 (원 단위 -> 억 원 단위 변환)
+                    net_amount = float(row.get("netBuyAmount", row.get("netAmount", 0)))
+                    amt_eok = round(abs(net_amount) / 100000000.0, 1)
+                    if trade_type == "순매도":
+                        amt_eok = -amt_eok
+
                     records.append({
-                        "순위": idx, "종목코드": code, "종목명": name, "현재가": price,
-                        "등락률(%)": change_pct, "순매수대금(억)": amt_eok, "시가총액_가중": price * 1000, "데이터_출처": "네이버 모바일 수급"
+                        "순위": idx,
+                        "종목코드": code,
+                        "종목명": name,
+                        "현재가": price,
+                        "등락률(%)": round(change_pct, 2),
+                        "순매수대금(억)": amt_eok,
+                        "시가총액_가중": max(price * 1000, 500),
+                        "데이터_출처": "Daum 실시간 금융 API"
                     })
                 return pd.DataFrame(records)
     except Exception as e:
-        logger.warning(f"네이버 모바일 API 실패: {e}")
+        logger.warning(f"Daum 금융 수급 API 실패: {e}")
     return pd.DataFrame()
 
 
-# ==============================================================================
-# 4. 통합 시장 전체 수급 스캐너 (모의 데이터 없이 실패 시 빈 값 반환)
-# ==============================================================================
+# ==============================================
+# 4. 통합 시장 전체 수급 스캐너 라우팅
+# ==============================================
 @st.cache_data(ttl=60, show_spinner=False)
 def get_market_radar_scanner(market: str = "KOSPI", investor: str = "외국인", trade_type: str = "순매수", top_n: int = 30) -> pd.DataFrame:
-    # 1. LS증권 API 시도
-    df_ls = fetch_ls_deal_ranking(market, investor, trade_type, top_n)
-    if not df_ls.empty:
-        return df_ls
+    """
+    1. KRX Open API (공식 거래소) -> 2. KIS API (증권사) -> 3. Daum 실시간 API 순차 호출
+    (가짜 모의 데이터 절대 미사용)
+    """
+    # 1. KRX OPEN API
+    df_krx = fetch_krx_investor_ranking(market, investor, trade_type, top_n)
+    if not df_krx.empty:
+        return df_krx
 
-    # 2. KIS API 시도
+    # 2. KIS API
     df_kis = fetch_kis_deal_ranking(market, investor, trade_type, top_n)
     if not df_kis.empty:
         return df_kis
 
-    # 3. 네이버 모바일 API 시도
-    df_naver = fetch_naver_mobile_ranking(market, investor, trade_type, top_n)
-    if not df_naver.empty:
-        return df_naver
+    # 3. Daum 금융 REST API (순매수/순매도 분리 제공)
+    df_daum = fetch_daum_deal_ranking(market, investor, trade_type, top_n)
+    if not df_daum.empty:
+        return df_daum
 
-    # 모든 파이프라인 실패 시 빈 DataFrame 반환 (가짜 모의 데이터 절대 생성 금지)
+    # 실패 시 빈 DataFrame 반환
     return pd.DataFrame()
 
 
 # ==============================================================================
-# 5. 30영업일 영점조정 누적 수급 시계열 계산 모듈 (Yahoo Finance 원장 연동)
+# 5. 30영업일 영점조정 누적 수급 시계열 계산 모듈
 # ==============================================================================
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_stock_cumulative_flow(stock_code: str = "005930", days: int = 30) -> pd.DataFrame:
