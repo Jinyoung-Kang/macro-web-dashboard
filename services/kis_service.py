@@ -10,6 +10,7 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 def get_secret(key_path: str, default: str = "") -> str:
+    """Streamlit Secrets 및 환경변수 안전 로드"""
     try:
         if hasattr(st, "secrets") and st.secrets:
             keys = key_path.split(".")
@@ -44,6 +45,7 @@ KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_kis_access_token() -> str:
+    """KIS OAuth 2.0 Access Token 발급 및 캐싱"""
     app_key = get_secret("kis.app_key", get_secret("KIS_APP_KEY", ""))
     app_secret = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", ""))
     
@@ -68,6 +70,7 @@ def get_kis_access_token() -> str:
 
 
 def call_kis_api(tr_id: str, endpoint: str, params: dict) -> dict:
+    """KIS API GET 공통 호출기"""
     token = get_kis_access_token()
     app_key = get_secret("kis.app_key", get_secret("KIS_APP_KEY", ""))
     app_secret = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", ""))
@@ -97,8 +100,8 @@ def call_kis_api(tr_id: str, endpoint: str, params: dict) -> dict:
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_kis_kospi_index() -> tuple:
     """
-    한국투자증권(KIS) API를 사용하여 코스피 지수를 조회
-    (튜플 반환으로 macro_service의 unpacking 에러 완전 차단)
+    한국투자증권(KIS) API를 사용하여 코스피 업종(지수) 현재가를 조회
+    반환: (포맷된 문자열, 현재가 수치) -> macro_service 언패킹 오류 방지
     """
     params = {
         "FID_COND_MRKT_DIV_CODE": "U",  
@@ -114,8 +117,8 @@ def fetch_kis_kospi_index() -> tuple:
                 current_idx = float(output.get("bstp_nmix_prpr", "0"))
                 change_pct = float(output.get("bstp_nmix_prdy_ctrt", "0"))
                 sign = "+" if change_pct > 0 else ""
-                formatted = f"{current_idx:,.2f} ({sign}{change_pct:.2f}%)"
-                return formatted, current_idx
+                formatted_str = f"{current_idx:,.2f} ({sign}{change_pct:.2f}%)"
+                return formatted_str, current_idx
             except Exception as e:
                 logger.warning(f"KIS 지수 파싱 오류: {e}")
                 
