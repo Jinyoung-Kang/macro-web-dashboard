@@ -43,25 +43,43 @@ def get_secret(key_path: str, default: str = "") -> str:
 
 
 def clean_markdown_output(text: str) -> str:
-    """AI 응답 마크다운 정제 및 줄바꿈/서식 정상화 헬퍼 함수"""
+    """AI 응답 마크다운 표 및 서식 완전 복원/정제 함수"""
     if not text:
         return ""
     
-    # 1. <br> 태그를 실제 개행(\n)으로 변환
+    # 1. HTML br 태그를 실제 개행(\n)으로 변환
     text = re.sub(r'(?i)&lt;br\s*/?&gt;|<br\s*/?>', '\n', text)
     
-    # 2. 스페인어/외국어 잔재 정제
-    text = text.replace("mientras", "반면,").replace("美聯儲", "미 연준").replace("下次", "다음")
-    
-    # 3. 한 줄로 뭉개진 파이프 표(||)를 정상 개행 처리
+    # 2. 한 줄로 뭉개진 파이프 표 분리 (|| -> |\n|)
     text = re.sub(r'\|\s*\|', '|\n|', text)
     
-    # 4. 헤딩 기호가 누락된 **1. 번호** 형태를 ### 1. 헤딩으로 승격
-    text = re.sub(r'(?m)^\s*\*\*(\d+[\.\s][^\*]+)\*\*', r'### \1', text)
+    # 3. 외국어 잔재 정제
+    text = text.replace("mientras", "반면,").replace("美聯儲", "미 연준").replace("下次", "다음")
     
-    # 5. 과도한 연속 빈 줄 정리
+    # 4. **1. 제목** 패턴을 마크다운 헤딩(### 1. 제목)으로 승격
+    text = re.sub(r'(?m)^\s*\*\*(\d+[\.\s][^\*\n]+)\*\*\s*[:\-]?\s*', r'### \1\n', text)
+    
+    # 5. 마크다운 테이블 구분선(|---|---|) 누락 자동 보정
+    lines = text.split('\n')
+    fixed_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        fixed_lines.append(line)
+        # 2열 테이블 헤더 감지 (| 구분 | 내용 |)
+        if re.match(r'^\s*\|\s*구분\s*\|\s*내용\s*\|\s*$', line) and i + 1 < len(lines):
+            next_line = lines[i + 1]
+            if not re.match(r'^\s*\|(?:\s*:?-+:?\s*\|)+\s*$', next_line):
+                fixed_lines.append('| :--- | :--- |')
+        # 4열 테이블 헤더 감지 (| 시나리오 | 발생 조건 | ...)
+        elif re.match(r'^\s*\|\s*시나리오\s*\|\s*발생\s*조건\s*\|', line) and i + 1 < len(lines):
+            next_line = lines[i + 1]
+            if not re.match(r'^\s*\|(?:\s*:?-+:?\s*\|)+\s*$', next_line):
+                fixed_lines.append('| :--- | :--- | :--- | :--- |')
+        i += 1
+    
+    text = '\n'.join(fixed_lines)
     text = re.sub(r'\n{3,}', '\n\n', text)
-    
     return text.strip()
 
 
@@ -81,7 +99,7 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
             {"role": "user", "content": prompt}
         ], 
         "temperature": 0.2, 
-        "max_tokens": 3000
+        "max_tokens": 3500
     }
     
     start_time = time.time()
@@ -104,7 +122,7 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
 
 
 # ==========================================
-# 헬퍼 함수 1: NVIDIA GPT-OSS-20B 1순위 번역
+# 헬퍼 함수 1: NVIDIA GPT-OSS-20B 1순위 표 보존 번역기
 # ==========================================
 def translate_to_korean_via_nvidia(text: str, api_key: str) -> tuple[bool, str]:
     if not api_key or not text:
@@ -116,13 +134,15 @@ def translate_to_korean_via_nvidia(text: str, api_key: str) -> tuple[bool, str]:
         "Content-Type": "application/json"
     }
     
-    system_prompt = "You are a professional financial translator. Translate the text into 100% natural Korean. Preserve all markdown structure and newlines. Do not leave any Chinese or foreign characters."
-    translate_prompt = (
-        "다음 텍스트에 포함된 모든 외국어와 한자를 완벽하고 자연스러운 100% 한국어로 번역해. "
-        "마크다운 줄바꿈과 구조는 완벽히 유지해. "
-        "서론, 배경 설명, 인사말을 빼고 오직 번역된 결과만 즉시 출력해:\n\n"
-        f"{text}"
+    system_prompt = (
+        "You are an expert financial translator. Translate the given English financial report into 100% natural, professional Korean.\n"
+        "STRICT MANDATORY RULES:\n"
+        "1. STRICTLY PRESERVE all Markdown table syntax (| delimiter, headers, and separator lines |---|).\n"
+        "2. Keep each table row on its own line. NEVER merge table rows into a single line.\n"
+        "3. Preserve all Markdown headings (###), lists (*, -), and bold formatting (**).\n"
+        "4. Output ONLY the translated Markdown text without introductory or concluding phrases."
     )
+    translate_prompt = f"Translate the following financial markdown analysis into professional Korean while keeping all tables and formatting intact:\n\n{text}"
 
     payload = {
         "model": "openai/gpt-oss-20b",
@@ -131,15 +151,14 @@ def translate_to_korean_via_nvidia(text: str, api_key: str) -> tuple[bool, str]:
             {"role": "user", "content": translate_prompt}
         ],
         "temperature": 0.1,
-        "max_tokens": 2000
+        "max_tokens": 3500
     }
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=20)
+        resp = requests.post(url, headers=headers, json=payload, timeout=30)
         if resp.status_code == 200:
             translated_text = resp.json()["choices"][0]["message"]["content"]
-            cleaned = clean_markdown_output(translated_text)
-            return True, cleaned
+            return True, clean_markdown_output(translated_text)
         else:
             return False, text
     except Exception:
@@ -147,7 +166,7 @@ def translate_to_korean_via_nvidia(text: str, api_key: str) -> tuple[bool, str]:
 
 
 # ==========================================
-# 헬퍼 함수 2: Cloudflare Llama-3.1-8B 2순위 번역
+# 헬퍼 함수 2: Cloudflare Llama-3.1-8B 2순위 표 보존 번역기
 # ==========================================
 def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: str) -> tuple[str, str]:
     if not account_id or not api_token or not text:
@@ -157,25 +176,27 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
-    translate_prompt = (
-        "다음 텍스트에 포함된 모든 외국어와 한자를 자연스러운 100% 한국어로 번역해. 줄바꿈을 절대 유지해. "
-        "서론, 인사말을 빼고 오직 번역된 결과만 즉시 출력해:\n\n"
-        f"{text}"
+    system_prompt = (
+        "You are an expert financial translator. Translate the given English financial analysis into natural Korean.\n"
+        "Preserve all Markdown table rows, headers, pipes (|), and line breaks exactly. Do NOT collapse tables into one line.\n"
+        "Output ONLY the translated markdown."
     )
     
     payload = {
-        "messages": [{"role": "user", "content": translate_prompt}],
-        "max_tokens": 1500
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Translate to Korean maintaining all markdown tables and layout:\n\n{text}"}
+        ],
+        "max_tokens": 3500
     }
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=20)
+        resp = requests.post(url, headers=headers, json=payload, timeout=30)
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success"):
                 translated_text = data["result"]["response"]
-                cleaned = clean_markdown_output(translated_text)
-                return cleaned, "🟡 CF Llama-3.1-8B 우회 번역 완료"
+                return clean_markdown_output(translated_text), "🟡 CF Llama-3.1-8B 우회 번역 완료"
             else:
                 return text, f"🔴 CF 번역 API 실패: {data.get('errors')}"
         else:
@@ -193,17 +214,33 @@ def test_nvidia_nemotron(api_key: str, prompt: str, system_prompt: str = None) -
 
 
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prompt: str = None) -> dict:
+    """
+    Cloudflare DeepSeek-R1 (항상 영어로 생성 후 NVIDIA GPT-OSS 또는 CF Llama로 한국어 번역)
+    """
     model = "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
     if not account_id or not api_token:
-        return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
+        return {"status": False, "provider": "Cloudflare AI (DeepSeek-R1)", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
 
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
-    sys_p = system_prompt or INVESTMENT_AGENT_PROMPT
-    enhanced_prompt = f"{sys_p}\n\n[중요: 마크다운 줄바꿈을 완벽히 유지하고 100% 한국어로만 답변하십시오.]\n\n질문:\n{prompt}"
-        
-    payload = {"messages": [{"role": "user", "content": enhanced_prompt}], "max_tokens": 10000}
+    # DeepSeek 모델에게 영어 생성 및 엄격한 마크다운 테이블 출력 지시
+    english_system = (
+        "You are an elite quantitative derivatives analyst and macro strategist. "
+        "Analyze the provided KOSPI 200 futures and options data. "
+        "ALWAYS respond in ENGLISH using strict, well-structured Markdown format with complete tables and bullet points. "
+        "Preserve table formatting with explicit pipes and newlines."
+    )
+    english_prompt = f"Analyze the following Korean derivatives and market data, and output your structured analysis in English:\n\n{prompt}"
+    
+    payload = {
+        "messages": [
+            {"role": "system", "content": english_system},
+            {"role": "user", "content": english_prompt}
+        ],
+        "max_tokens": 8000,
+        "temperature": 0.2
+    }
     
     start_time = time.time()
     try:
@@ -218,38 +255,39 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prom
                 if not cleaned:
                     cleaned = raw.strip()
                 
-                cleaned = clean_markdown_output(cleaned)
-                translation_info = "⚪ 번역 생략 (자체 한글 출력)"
+                # DeepSeek 영문 응답을 한국어로 100% 번역
+                nv_key = get_secret("ai.nvidia_api_key", "")
+                translated_ok = False
+                translation_info = ""
                 
-                has_chinese = bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf]', cleaned)) 
-                if has_chinese or len(re.findall(r'[\uac00-\ud7a3]', cleaned)) < 15:
-                    nv_key = get_secret("ai.nvidia_api_key", "")
-                    translated_ok = False
-                    if nv_key:
-                        is_ok, trans_text = translate_to_korean_via_nvidia(cleaned, nv_key)
-                        if is_ok:
-                            cleaned = trans_text
-                            translation_info = "🟢 NVIDIA GPT-OSS 100% 한글 번역 완료"
-                            translated_ok = True
-                    
-                    if not translated_ok:
-                        cleaned, translation_info = translate_to_korean_via_cloudflare(cleaned, account_id, api_token)
+                if nv_key:
+                    is_ok, trans_text = translate_to_korean_via_nvidia(cleaned, nv_key)
+                    if is_ok:
+                        cleaned = trans_text
+                        translation_info = "🟢 NVIDIA GPT-OSS 표 보존 한글 번역"
+                        translated_ok = True
+                
+                if not translated_ok:
+                    trans_text, trans_msg = translate_to_korean_via_cloudflare(cleaned, account_id, api_token)
+                    cleaned = trans_text
+                    translation_info = trans_msg
 
+                cleaned = clean_markdown_output(cleaned)
                 return {
                     "status": True, 
-                    "provider": "Cloudflare AI", 
+                    "provider": "Cloudflare AI (DeepSeek-R1)", 
                     "model": model, 
                     "latency_ms": latency, 
                     "response": cleaned,
                     "translation_info": translation_info
                 }
             else:
-                return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": latency, "response": f"API Error: {data.get('errors')}"}
+                return {"status": False, "provider": "Cloudflare AI (DeepSeek-R1)", "model": model, "latency_ms": latency, "response": f"API Error: {data.get('errors')}"}
         else:
-            return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
+            return {"status": False, "provider": "Cloudflare AI (DeepSeek-R1)", "model": model, "latency_ms": latency, "response": f"HTTP {resp.status_code}: {resp.text}"}
     except Exception as e:
         latency = int((time.time() - start_time) * 1000)
-        return {"status": False, "provider": "Cloudflare AI", "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
+        return {"status": False, "provider": "Cloudflare AI (DeepSeek-R1)", "model": model, "latency_ms": latency, "response": f"통신 에러: {str(e)}"}
 
 
 def test_nvidia_gpt_oss(api_key: str, prompt: str, system_prompt: str = None) -> dict:
@@ -271,25 +309,29 @@ def generate_ai_briefing_with_failover(prompt: str, system_prompt: str = None) -
     cf_token = get_secret("ai.cloudflare_api_token", "")
     ce_key = get_secret("ai.cerebras_api_key", "")
 
+    # 1순위: NVIDIA Nemotron-3
     if nv_key:
         res = test_nvidia_nemotron(nv_key, prompt, system_prompt)
         if res["status"]:
             res["pipeline_step"] = "1순위 (NVIDIA Nemotron-3) 정상 응답"
             return res
 
+    # 2순위: Cloudflare DeepSeek (영어 생성 후 2중 번역 우회)
     if cf_id and cf_token:
         res = test_cloudflare_ai(cf_id, cf_token, prompt, system_prompt)
         if res["status"]:
-            trans_msg = res.get("translation_info", "상태 없음")
-            res["pipeline_step"] = f"2순위 (Cloudflare AI) Failover 성공 [{trans_msg}]"
+            trans_msg = res.get("translation_info", "번역 완료")
+            res["pipeline_step"] = f"2순위 (Cloudflare DeepSeek-R1) [{trans_msg}]"
             return res
 
+    # 3순위: NVIDIA GPT-OSS-20B
     if nv_key:
         res = test_nvidia_gpt_oss(nv_key, prompt, system_prompt)
         if res["status"]:
             res["pipeline_step"] = "3순위 (NVIDIA GPT-OSS-20B) Failover 성공"
             return res
 
+    # 4순위: Cerebras Cloud
     if ce_key:
         res = test_cerebras(ce_key, prompt, system_prompt)
         if res["status"]:
@@ -327,7 +369,6 @@ def call_selected_ai_engine(engine_name: str, prompt: str, system_prompt: str = 
 
 
 def ask_investment_agent(prompt: str) -> str:
-    """일반 투자 에이전트 호출 래퍼 함수"""
     res = generate_ai_briefing_with_failover(prompt=prompt, system_prompt=INVESTMENT_AGENT_PROMPT)
     if isinstance(res, dict):
         return clean_markdown_output(res.get("response", "AI 응답을 생성하지 못했습니다."))
@@ -335,7 +376,6 @@ def ask_investment_agent(prompt: str) -> str:
 
 
 def ask_krx_cot_agent(prompt: str) -> dict:
-    """국내 파생상품 & COT 전용 정밀 에이전트 호출 래퍼 함수 (결과 딕셔너리 반환)"""
     res = generate_ai_briefing_with_failover(prompt=prompt, system_prompt=KRX_DERIVATIVES_PROMPT)
     if isinstance(res, dict):
         res["response"] = clean_markdown_output(res.get("response", "AI 응답을 생성하지 못했습니다."))
