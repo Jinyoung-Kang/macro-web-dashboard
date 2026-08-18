@@ -12,7 +12,6 @@ from services.krx_service import get_krx_futures_history, get_krx_investor_deriv
 from services.ai_service import ask_investment_agent
 
 def render_krx_cot_view():
-    # 상단 헤더
     st.markdown("""
     <div style="padding: 12px 0 20px 0;">
         <h2 style="margin:0; font-weight: 700; color: #F0F6FC;">
@@ -24,11 +23,9 @@ def render_krx_cot_view():
     </div>
     """, unsafe_allow_html=True)
 
-    # KRX 인증키 상태 안내 배너
     if not KRX_AUTH_KEY:
-        st.info("💡 **KRX OPEN API 인증키가 미등록 상태입니다.** 현재 KODEX 200 기반 프록시 시뮬레이션 모드로 작동 중입니다. 정밀한 원장 데이터를 연동하려면 `.streamlit/secrets.toml`에 `KRX_AUTH_KEY`를 추가하세요.")
+        st.info("💡 **KRX OPEN API 인증키가 미등록 상태입니다.** 현재 KODEX 200 기반 프록시 시뮬레이션 모드로 작동 중입니다. 정밀한 원장 데이터를 연동하려면 `.streamlit/secrets.toml`에 `[krx] api_key = '...'`를 추가하세요.")
 
-    # 상단 컨트롤 패널
     c1, c2, c3 = st.columns([2, 2, 1])
     with c1:
         lookback_days = st.selectbox(
@@ -46,7 +43,6 @@ def render_krx_cot_view():
             st.cache_data.clear()
             st.rerun()
 
-    # 데이터 로드
     df_hist = get_krx_futures_history(days=lookback_days)
     df_investors = get_krx_investor_derivatives_summary()
 
@@ -57,9 +53,7 @@ def render_krx_cot_view():
     latest = df_hist.iloc[-1]
     prev = df_hist.iloc[-2] if len(df_hist) > 1 else latest
 
-    # ==========================================================================
-    # 1. 핵심 매크로 & 파생 메트릭스 카드
-    # ==========================================================================
+    # 메트릭스 카드
     m1, m2, m3, m4 = st.columns(4)
     with m1:
         st.metric(
@@ -91,9 +85,7 @@ def render_krx_cot_view():
 
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
-    # ==========================================================================
-    # 2. 메인 복합 차트: 선물 지수 & 미결제약정(OI) & 거래량 시계열
-    # ==========================================================================
+    # 복합 차트
     st.markdown("#### 📈 KOSPI 200 선물 가격 & 미결제약정(OI) 추이")
     
     fig = make_subplots(
@@ -108,7 +100,6 @@ def render_krx_cot_view():
         )
     )
 
-    # 1단: 선물 가격 (Line) & 미결제약정 (Line on Secondary Y)
     fig.add_trace(
         go.Scatter(
             x=df_hist["Date"],
@@ -131,7 +122,6 @@ def render_krx_cot_view():
         row=1, col=1
     )
 
-    # 2단: 시장 베이시스 (Bar Chart - 양수 Green, 음수 Red)
     basis_colors = ["#238636" if b >= 0 else "#DA3633" for b in df_hist["Market_Basis"]]
     fig.add_trace(
         go.Bar(
@@ -143,7 +133,6 @@ def render_krx_cot_view():
         row=2, col=1
     )
 
-    # 3단: 거래량 (Bar)
     fig.add_trace(
         go.Bar(
             x=df_hist["Date"],
@@ -170,9 +159,7 @@ def render_krx_cot_view():
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # ==========================================================================
-    # 3. 파생상품 수급 국면 매트릭스 & 투자자별 누적 포지션
-    # ==========================================================================
+    # 국면 매트릭스 & 포지션 테이블
     col_left, col_right = st.columns([1.2, 1])
 
     with col_left:
@@ -236,9 +223,7 @@ def render_krx_cot_view():
             }
         )
 
-    # ==========================================================================
-    # 4. AI 파생 & 매크로 포지션 종합 브리핑
-    # ==========================================================================
+    # AI 브리핑
     st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
     st.markdown("#### 🤖 AI 파생 수급 & 스마트머니 종합 진단")
 
@@ -251,10 +236,9 @@ def render_krx_cot_view():
             - 미결제약정(OI): {int(latest['Open_Interest']):,} 계약 (변동: {int(latest['OI_Change']):+,} 계약)
             - 현재 시장 국면: {latest['Market_Phase']}
             - 한국판 COT OI Index: {latest['COT_OI_Index']:.1f}% (0%=극단적 과매도/바닥, 100%=극단적 과열/천장)
-            - 주요 투자자 포지션: 외국인 20일 누적 +38,500계약 롱, 기관 -30,900계약 헤지 매도, 개인 -7,600계약
 
             위 파생 수급 데이터를 기반으로 다음을 냉정하고 비판적으로 분석하라:
-            1. 현재 선물 베이시스와 미결제약정 변화가 시사하는 코스피 현물 시장의 단기 방향성 (외국인 프로그램 매수/매도 압력).
+            1. 현재 선물 베이시스와 미결제약정 변화가 시사하는 코스피 현물 시장의 단기 방향성.
             2. 숏스퀴즈 가능성 또는 롱 트랩(상승 함정) 위험도 평가.
             3. 매크로 투자자가 취해야 할 실전 포트폴리오 리밸런싱 전략.
             """
