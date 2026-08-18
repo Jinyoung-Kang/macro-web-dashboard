@@ -16,6 +16,7 @@ from views.cot_view import render_cot_view
 from views.krx_cot_view import render_krx_cot_view
 from views.radar_view import render_radar_view
 from views.ai_test_view import render_ai_test_view
+from views.ai_report_view import render_ai_report_view
 
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -144,9 +145,10 @@ menu_selection = st.sidebar.radio(
         "🏛️ 글로벌 투기세력 (COT)",
         "🇰🇷 국내 파생 & 투기세력 (KRX)",
         "📡 외국인/기관 수급 레이더 (코스피)",
+        "🤖 AI 종합 데이터 분석 & 결론 리포트",
         "🤖 AI API 연결 테스트"
     ],
-    index=0,  # 국내 파생상품 수급 & COT를 기본 탭으로 활성화
+    index=0,
     label_visibility="collapsed"
 )
 
@@ -200,5 +202,7 @@ elif menu_selection == "🇰🇷 국내 파생 & 투기세력 (KRX)":
     render_krx_cot_view()
 elif menu_selection == "📡 외국인/기관 수급 레이더 (코스피)":
     render_radar_view()
+elif menu_selection == "🤖 AI 종합 데이터 분석 & 결론 리포트":
+    render_ai_report_view()
 elif menu_selection == "🤖 AI API 연결 테스트":
     render_ai_test_view()
