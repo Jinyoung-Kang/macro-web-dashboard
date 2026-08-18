@@ -31,7 +31,7 @@ def render_radar_view():
     tab1, tab2 = st.tabs(["📊 날짜별 시장 수급 스캐너", "🔍 사용자 지정 기준일(0점) 누적 수급 변화"])
 
     # ==========================================================================
-    # TAB 1: 날짜별 시장 수급 스캐너 (사용자 지정 날짜 선택 기능 포함)
+    # TAB 1: 날짜별 시장 수급 스캐너
     # ==========================================================================
     with tab1:
         c1, c2, c3, c4, c5 = st.columns([1.2, 1.2, 1.1, 1.1, 1])
@@ -48,32 +48,34 @@ def render_radar_view():
 
         market_key = "KOSPI" if "KOSPI" in market_sel else "KOSDAQ"
         
+        # 6단계 무중단 파이프라인 스캔
         df_radar = get_market_radar_scanner(target_date_obj=target_date, market=market_key, investor=investor_sel, trade_type=trade_sel, top_n=top_n)
 
         if df_radar.empty:
-            if not PYKRX_AVAILABLE:
-                st.error("""
-                ❌ **필수 라이브러리(`pykrx`) 누락 오류**
-                
-                과거 날짜 및 정확한 장마감 수급 데이터를 가져오기 위한 필수 패키지가 없습니다.
-                **해결 방법**: `requirements.txt` 파일 맨 아래에 `pykrx`를 추가하고 앱을 재부팅해 주세요.
-                """)
-            else:
-                st.warning("⚠️ **최근 7일 내의 거래소 확정 수급 데이터를 찾을 수 없습니다.** 거래소 점검 중이거나 인터넷 연결을 확인해 주세요.")
+            st.error(f"""
+            ❌ **최근 7영업일 내 수급 데이터를 찾을 수 없습니다.**
+            
+            현재 KRX, KIS, LS, Daum, Naver API 서버 통신이 모두 지연되거나 접근이 차단된 상태입니다.
+            잠시 후 데이터 새로고침을 진행해 주세요.
+            """)
         else:
             data_source = df_radar["데이터_출처"].iloc[0] if "데이터_출처" in df_radar.columns else "공식 거래소 API"
             
-            # 반환된 데이터의 실제 기준일자 추출
             match = re.search(r'\((\d{8}|\d{4}-\d{2}-\d{2})\)', data_source)
-            actual_data_date = match.group(1) if match else target_date.strftime('%Y-%m-%d')
+            if match:
+                raw_date = match.group(1).replace("-", "")
+                actual_data_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}"
+            else:
+                actual_data_date = target_date.strftime('%Y-%m-%d')
             
-            # 사용자가 선택한 날짜와 실제 반환된 데이터 날짜가 다를 경우 알림
             target_date_str_compact = target_date.strftime('%Y%m%d')
-            if actual_data_date.replace("-", "") != target_date_str_compact and "Daum" not in data_source:
-                st.info(f"💡 **자동 조정 안내**: 선택하신 `{target_date.strftime('%Y-%m-%d')}`는 휴장일이거나 아직 데이터가 집계되지 않았습니다. **가장 최근 거래일({actual_data_date})의 확정 데이터**를 표출합니다.")
+            if actual_data_date.replace("-", "") != target_date_str_compact:
+                st.info(f"💡 **스마트 롤백 작동**: 선택하신 `{target_date.strftime('%Y-%m-%d')}`는 휴장일이거나 원장이 확정되지 않아, **가장 최근 거래일({actual_data_date})**의 데이터를 표출합니다.")
 
             top1 = df_radar.iloc[0]
             total_top_amt = df_radar["순매수대금(억)"].sum()
+            
+            st.caption(f"⚡ 파이프라인: `[KIS API ➔ LS API ➔ KRX OpenAPI ➔ Daum API ➔ Naver API ➔ PyKrx]` 중 **{data_source.split('(')[0].strip()}** 채널에서 수신 성공")
             
             sc1, sc2, sc3 = st.columns(3)
             with sc1:
@@ -85,7 +87,7 @@ def render_radar_view():
 
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
-            st.markdown(f"#### 🗺️ {investor_sel} {trade_sel} 상위 종목 맵")
+            st.markdown(f"#### 🗺️ {actual_data_date} | {investor_sel} {trade_sel} 상위 종목 맵")
             
             df_radar["Abs_Amt"] = df_radar["순매수대금(억)"].abs()
             fig_tree = px.treemap(
