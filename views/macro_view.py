@@ -224,7 +224,7 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
 
     st.divider()
 
-    # 3. 신용 리스크, 은행권 및 시장 변동성 (MOVE 무중단 렌더링)
+    # 3. 신용 리스크, 은행권 및 시장 변동성 (무중단 지표 렌더링)
     st.subheader("⚡ 신용 리스크, 은행권 및 시장 변동성 (Credit & Liquidity Risk)")
     st.caption("주식·채권 가격 변동성, 기업 부도 위험(HY OAS), 글로벌 은행권 단기 자금경색(3M CP) 및 종합 금융스트레스(STLFSI4)를 모니터링합니다.")
 
@@ -251,7 +251,7 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
             st.metric("ICE BofA MOVE (채권 변동성) :gray[[지연/마감]]", f"{m_curr:.2f}", f"{m_delta:+.2f} ({m_pct:+.2f}%)")
             st.markdown(f"상태: :{m_color}[**{m_status}**] (전일: `{m_prev:.2f}`)")
         else:
-            st.metric("ICE BofA MOVE", "동기화 대기 중")
+            st.metric("ICE BofA MOVE", "로드 실패")
 
     with col_h:
         if hy_df is not None and len(hy_df) >= 2:
