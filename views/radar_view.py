@@ -15,6 +15,7 @@ from services.radar_service import get_market_radar_scanner, get_stock_cumulativ
 def render_radar_view():
     # KST 기준 시각 및 장 상태 정확 판정
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    now_str = now_kst.strftime("%Y-%m-%d %H:%M:%S")
     weekday = now_kst.weekday() # 0: 월 ~ 6: 일
     time_num = now_kst.hour * 100 + now_kst.minute
     
@@ -22,7 +23,7 @@ def render_radar_view():
         market_status_text = "⚪ 주말 휴장 (최근 거래일 확정 수급)"
         status_color = "#8B949E"
     elif 900 <= time_num < 1530:
-        market_status_text = "🟢 코스피/코스닥 정규장 (실시간 수급 집계 중)"
+        market_status_text = "🟢 코스피/코스닥 정규장 (실시간 수급 동기화 중)"
         status_color = "#3FB950"
     elif 1530 <= time_num <= 1800:
         market_status_text = "🟣 시간외 단일가 / 애프터마켓 (당일 최종 누적 수급)"
@@ -67,7 +68,7 @@ def render_radar_view():
         df_radar = get_market_radar_scanner(market=market_key, investor=investor_sel, trade_type=trade_sel, top_n=top_n)
 
         if df_radar.empty:
-            st.warning("수급 데이터를 가져오는 중입니다. 잠시 후 다시 시도해주세요.")
+            st.warning("네트워크 오류로 수급 데이터를 가져오지 못했습니다. 잠시 후 새로고침 해주세요.")
         else:
             # 상단 메트릭 요약
             top1 = df_radar.iloc[0]
@@ -75,15 +76,15 @@ def render_radar_view():
             
             sc1, sc2, sc3 = st.columns(3)
             with sc1:
-                st.metric(label=f"1위 집중 종목 ({investor_sel} {trade_sel})", value=f"{top1['종목명']}", delta=f"{top1['순매수대금(억)']:+,.1f} 억")
+                st.metric(label=f"🥇 1위 집중 종목 ({investor_sel})", value=f"{top1['종목명']}", delta=f"{top1['순매수대금(억)']:+,.1f} 억")
             with sc2:
                 st.metric(label=f"상위 {len(df_radar)}개사 합산 {trade_sel} 규모", value=f"{total_top_amt:+,.1f} 억원")
             with sc3:
-                st.metric(label="데이터 갱신 시각 (KST)", value=now_kst.strftime("%H:%M:%S"))
+                st.metric(label="⏱️ 데이터 기준 시각 (KST)", value=now_str)
 
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
-            # 수급 트리맵 시각화 (절대 금액 크기 비례, 등락률 컬러)
+            # 수급 트리맵 시각화 (중앙 정렬 적용)
             st.markdown(f"#### 🗺️ {investor_sel} {trade_sel} 상위 종목 맵 (Treemap)")
             
             df_radar["Abs_Amt"] = df_radar["순매수대금(억)"].abs()
@@ -95,7 +96,14 @@ def render_radar_view():
                 color_continuous_scale=["#388BFD", "#161B22", "#F85149"],
                 color_continuous_midpoint=0.0,
                 hover_data={"종목코드": True, "현재가": ":,.0f", "순매수대금(억)": ":+,.1f", "등락률(%)": ":+.2f"},
-                height=460
+                height=480
+            )
+            
+            # 텍스트 중앙 정렬 및 가독성 최적화
+            fig_tree.update_traces(
+                textposition="middle center",
+                textfont=dict(size=15, color="white", weight="bold"),
+                hovertemplate="<b>%{label}</b><br>현재가: %{customdata[1]:,.0f}원<br>등락률: %{customdata[3]:+.2f}%<br>순매수금액: %{customdata[2]:+,.1f}억원"
             )
             fig_tree.update_layout(
                 paper_bgcolor="#0D1117",
