@@ -20,7 +20,6 @@ from services.macro_service import (
 
 @st.cache_data(ttl=60)
 def get_us_market_status() -> str:
-    """Yahoo Finance API를 통해 미국 증시(S&P 500 기준) 개장 여부 실시간 확인"""
     try:
         state = yf.Ticker("^GSPC").info.get("marketState", "CLOSED").upper()
         if state in ["REGULAR", "PRE", "POST"]:
@@ -30,7 +29,6 @@ def get_us_market_status() -> str:
         return "마감"
 
 def inject_market_status(name: str) -> str:
-    """지표 이름(name)을 분석하여 현재 한국 시간(KST) 기준 개장/마감 상태를 라벨에 주입"""
     now = datetime.now(pytz.timezone('Asia/Seoul'))
     wd = now.weekday()
     hm = now.hour * 100 + now.minute
@@ -88,18 +86,20 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
         st.caption(f"최근 데이터 갱신 시각: {now_str_kst} (KST) | 갱신 주기: {refresh_interval}초")
 
     # ==============================================================================
-    # 우측 상단 나란히 2개의 버튼 배치 (일반 텍스트 & AI 텍스트)
+    # 우측 상단 나란히 2개의 버튼 배치 (요구사항 반영)
     # ==============================================================================
     with header_right:
         st.write("")
-        # 버튼 1: 기존 일반 텍스트 브리핑
+        # 1. 기존 일반 텍스트 브리핑 버튼
         with st.popover("📋 텍스트 브리핑 보기 / 복사", use_container_width=True):
             st.markdown("**현재 시세 텍스트 종합 브리핑**")
             st.caption("우측 상단 복사 아이콘(📋)을 눌러 즉시 복사하세요.")
             st.code(report_text, language="text")
             
-        # 버튼 2: 신규 AI 종합 데이터 분석 브리핑 (버튼 1 바로 밑에 생성)
-        with st.popover("🤖 AI로 텍스트 브리핑 생성 / 복사", use_container_width=True):
+        st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
+            
+        # 2. 신규 AI 통합 브리핑 버튼 (1번 버튼 바로 밑에 위치)
+        with st.popover("🤖 AI로 텍스트 브리핑 보기 / 복사", use_container_width=True):
             st.markdown("**🤖 AI 기반 통합 데이터 브리핑**")
             st.caption(f"대시보드 전역의 최신 데이터를 취합하여 즉시 분석합니다.\n(기준 시각: {now_str_kst})")
             
@@ -109,7 +109,7 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
             ]
             macro_ai_engine = st.selectbox("AI 분석 엔진 선택", options=engine_options, index=0, key="popover_ai_engine")
             
-            if st.button("🧠 브리핑 생성", key="btn_macro_ai_popover", use_container_width=True):
+            if st.button("🧠 AI 브리핑 생성", key="btn_macro_ai_popover", use_container_width=True):
                 with st.spinner(f"[{macro_ai_engine}] 5대 핵심 지표 데이터를 수집 및 분석 중입니다..."):
                     try:
                         from views.ai_report_view import build_comprehensive_context
