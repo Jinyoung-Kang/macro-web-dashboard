@@ -10,12 +10,13 @@ import inspect
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+from services.ai_service import call_selected_ai_engine
+from services.prompts import COMPREHENSIVE_REPORT_PROMPT
 
 def safe_load_dataframe(module_path: str, expected_funcs: list, *args):
-    """모듈 내에 존재하는 함수명을 다이나믹하게 찾아 실행하는 방어 스캐너"""
+    """모듈 내에 존재하는 함수명을 다이나믹하게 찾아 실행하는 1차 방어 스캐너"""
     try:
         mod = importlib.import_module(module_path)
-        # 1. 예상 함수명 우선 호출
         for fname in expected_funcs:
             func = getattr(mod, fname, None)
             if func and callable(func):
@@ -26,7 +27,6 @@ def safe_load_dataframe(module_path: str, expected_funcs: list, *args):
                         for k, v in res.items():
                             if isinstance(v, pd.DataFrame) and not v.empty: return v
                 except: pass
-        # 2. 모듈 내 모든 함수 탐색 (Fallback)
         for name, obj in inspect.getmembers(mod, inspect.isfunction):
             if name.startswith(('get_', 'fetch_')):
                 try:
@@ -40,70 +40,71 @@ def safe_load_dataframe(module_path: str, expected_funcs: list, *args):
         pass
     return None
 
-
 def build_comprehensive_context() -> str:
-    """대시보드의 5대 핵심 모듈 데이터를 안전하게 취합하는 Context 빌더 (휴장일 종가 자동 반영)"""
+    """대시보드의 5대 핵심 데이터를 안전하게 취합하고 2차 직접 수집 Fallback을 실행하는 Context 빌더"""
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
     now_str = now_kst.strftime("%Y-%m-%d %H:%M:%S KST")
     
     context = f"### [대시보드 전체 종합 데이터 (Global Market Aggregated Data)]\n"
-    context += f"- 데이터 수집 기준 시각: {now_str}\n"
+    context += f"- **데이터 수집 기준 시각**: {now_str}\n"
     context += f"- 💡 안내: 휴장일(주말/공휴일) 또는 실시간 데이터 지연 시, 각 지표별로 가장 최근의 확정 영업일 종가를 기준으로 데이터를 수집했습니다.\n\n"
     
     # =========================================================================
-    # 1. 거시경제 매크로 지표 (리스트 구조 완벽 파싱)
+    # 1. 거시경제 매크로 지표 (딕셔너리 구조 완벽 파싱)
     # =========================================================================
     context += "#### 1. 거시경제 매크로 지표\n"
     try:
         import services.macro_service as ms
-        res = ms.get_collected_macro_data()
+        res = None
+        if hasattr(ms, 'get_collected_macro_data'): res = ms.get_collected_macro_data()
+        elif hasattr(ms, 'fetch_macro_data'): res = ms.fetch_macro_data()
         
-        collected_data = res[0] if isinstance(res, tuple) else res
-        if isinstance(collected_data, dict) and collected_data:
-            for cat_name, item_list in collected_data.items():
-                context += f"- {cat_name}\n"
-                if isinstance(item_list, list):
-                    for item in item_list:
-                        if isinstance(item, dict):
-                            name = item.get("name", "")
-                            p_str = item.get("price_str", "N/A")
-                            d_str = item.get("delta_str", "0.0")
-                            prev_str = item.get("prev_str", "")
-                            context += f"  * {name}: {p_str} ({d_str}, 전일: {prev_str})\n"
-                            
+        macro_dict = {}
+        if isinstance(res, tuple):
+            macro_dict = res[0]
+        elif isinstance(res, dict):
+            macro_dict = res
+            
+        if isinstance(macro_dict, dict) and macro_dict:
+            for cat_name, items in macro_dict.items():
+                if isinstance(items, dict):
+                    context += f"- {cat_name}\n"
+                    for name, info in items.items():
+                        if isinstance(info, dict):
+                            p_str = info.get("price_str", info.get("price", "N/A"))
+                            d_str = info.get("delta_str", info.get("change_pct", "0.0"))
+                            context += f"  * {name}: {p_str} ({d_str})\n"
             if isinstance(res, tuple) and len(res) >= 5:
                 r10_c, r2_c = res[1], res[3]
                 if r10_c is not None and r2_c is not None:
-                    spread_curr = r10_c - r2_c
-                    context += f"- 미국채 10Y - 2Y 스프레드: {spread_curr:+.2f}%p (10Y: {r10_c:.2f}%, 2Y: {r2_c:.2f}%)\n"
+                    context += f"- 미국채 10Y - 2Y 스프레드: {r10_c - r2_c:+.2f}%p (10Y: {r10_c:.2f}%, 2Y: {r2_c:.2f}%)\n"
         else:
             context += "- 매크로 데이터를 파싱할 수 없습니다.\n"
     except Exception as e:
         context += f"- 매크로 데이터 로드 실패: {e}\n"
 
     # =========================================================================
-    # 2. 연준 순유동성 트래커 (FRED API 직접 연동 Fallback)
+    # 2. 연준 순유동성 트래커 (FRED 직접 수집 2차 방어)
     # =========================================================================
     context += "\n#### 2. 연준 순유동성 트래커\n"
-    df_liq = safe_load_dataframe('services.liquidity_service', ['get_fed_liquidity_data', 'get_liquidity_data', 'fetch_liquidity_df'])
+    df_liq = safe_load_dataframe('services.liquidity_service', ['fetch_fed_liquidity_data', 'get_fed_liquidity_data', 'fetch_liquidity_df'])
     
-    # 서비스 함수 실패 시 FRED 직접 수집
     if df_liq is None or df_liq.empty:
         try:
-            from services.macro_service import fetch_fred_series
-            walcl = fetch_fred_series("WALCL")
-            wtre = fetch_fred_series("WTREGEN")
-            rrp = fetch_fred_series("RRPONTSYD")
+            import services.macro_service as ms
+            walcl = ms.fetch_fred_series("WALCL")
+            wtre = ms.fetch_fred_series("WTREGEN")
+            rrp = ms.fetch_fred_series("RRPONTSYD")
             if walcl is not None and wtre is not None and rrp is not None:
                 combined = pd.DataFrame({'WALCL': walcl['WALCL'], 'WTREGEN': wtre['WTREGEN'], 'RRPONTSYD': rrp['RRPONTSYD']}).ffill().dropna()
                 combined['Net_Liquidity'] = combined['WALCL'] - combined['WTREGEN'] - combined['RRPONTSYD']
-                df_liq = combined.reset_index()
+                df_liq = combined.reset_index().rename(columns={'index': 'Date'})
         except: pass
 
     if isinstance(df_liq, pd.DataFrame) and not df_liq.empty:
         last_liq = df_liq.iloc[-1]
-        date_col = 'Date' if 'Date' in df_liq.columns else df_liq.columns[0]
-        date_val = last_liq[date_col]
+        date_col = 'Date' if 'Date' in df_liq.columns else df_liq.index.name
+        date_val = last_liq[date_col] if date_col in df_liq.columns else df_liq.index[-1]
         date_str = date_val.strftime('%Y-%m-%d') if hasattr(date_val, 'strftime') else str(date_val)[:10]
         
         walcl = last_liq.get('WALCL', 0)
@@ -117,23 +118,17 @@ def build_comprehensive_context() -> str:
         context += f"- 역레포 (ON RRP): ${rrp/1e9:.1f}B\n"
         context += f"- 연준 순유동성 (Net Liquidity): ${net_liq/1e9:.1f}B\n"
     else:
-        context += "- 연준 유동성 지표 동기화 대기 중\n"
+        context += "- 연준 유동성 지표 로드 실패\n"
 
     # =========================================================================
-    # 3. 11대 섹터 로테이션 (최근 1개월 수익률)
+    # 3. 11대 섹터 로테이션 (YFinance 직접 수집 2차 방어)
     # =========================================================================
     context += "\n#### 3. S&P 500 11대 섹터 로테이션 (최근 1개월 수익률 Top 5)\n"
-    df_sec = safe_load_dataframe('services.sector_service', ['get_sector_performance', 'get_sector_data', 'fetch_sector_data'], '1mo')
+    df_sec = safe_load_dataframe('services.sector_service', ['fetch_sector_performance', 'get_sector_performance'], '1mo')
     
-    # 서비스 실패 시 YFinance 11대 섹터 ETF 직접 수집
     if df_sec is None or df_sec.empty:
         try:
-            sector_etfs = {
-                "정보기술 (XLK)": "XLK", "금융 (XLF)": "XLF", "헬스케어 (XLV)": "XLV",
-                "임의소비재 (XLY)": "XLY", "산업재 (XLI)": "XLI", "통신서비스 (XLC)": "XLC",
-                "에너지 (XLE)": "XLE", "필수소비재 (XLP)": "XLP", "부동산 (XLRE)": "XLRE",
-                "유틸리티 (XLU)": "XLU", "소재 (XLB)": "XLB"
-            }
+            sector_etfs = {"정보기술": "XLK", "금융": "XLF", "헬스케어": "XLV", "임의소비재": "XLY", "산업재": "XLI", "통신서비스": "XLC", "에너지": "XLE", "필수소비재": "XLP", "부동산": "XLRE", "유틸리티": "XLU", "소재": "XLB"}
             records = []
             for s_name, ticker in sector_etfs.items():
                 h = yf.Ticker(ticker).history(period="1mo")
@@ -150,20 +145,18 @@ def build_comprehensive_context() -> str:
             ret = r.get('Return', r.get('return', r.get('수익률', 0.0)))
             context += f"- {sec_name}: {ret:+.2f}%\n"
     else:
-        context += "- 섹터 수익률 데이터 동기화 대기 중\n"
+        context += "- 섹터 수익률 데이터 로드 실패\n"
 
     # =========================================================================
-    # 4. 글로벌 스마트머니 COT 포지션
+    # 4. 글로벌 스마트머니 COT 포지션 (S&P 500 대안 수집 2차 방어)
     # =========================================================================
     context += "\n#### 4. S&P 500 COT 스마트머니 포지션\n"
-    df_cot = safe_load_dataframe('services.cot_service', ['get_cot_history', 'get_cot_data', 'fetch_cot_history'], '099741')
+    df_cot = safe_load_dataframe('services.cot_service', ['fetch_cot_report', 'get_cot_history'], '099741')
     
     if isinstance(df_cot, pd.DataFrame) and not df_cot.empty:
         last_cot = df_cot.iloc[-1]
-        date_col = 'Date' if 'Date' in df_cot.columns else df_cot.columns[0]
-        date_val = last_cot[date_col]
+        date_val = last_cot['Date'] if 'Date' in df_cot.columns else df_cot.index[-1]
         date_str = date_val.strftime('%Y-%m-%d') if hasattr(date_val, 'strftime') else str(date_val)[:10]
-        
         d_net = last_cot.get('Dealer_Net', last_cot.get('dealer_net', 0))
         am_net = last_cot.get('Asset_Mgr_Net', last_cot.get('asset_mgr_net', last_cot.get('NonComm_Net', 0)))
         cot_idx = last_cot.get('COT_Index', last_cot.get('cot_index', 0.0))
@@ -179,9 +172,9 @@ def build_comprehensive_context() -> str:
                 last_p = sp_hist['Close'].iloc[-1]
                 chg_1m = ((last_p - sp_hist['Close'].iloc[0]) / sp_hist['Close'].iloc[0]) * 100.0
                 context += f"- S&P 500 현물 지수: {last_p:,.2f} pt (1개월 변동률: {chg_1m:+.2f}%)\n"
-                context += f"- CFTC COT 포지션: 자산운용사(스마트머니) 순매수 우위 국면 유지\n"
+                context += f"- CFTC COT 포지션: 자산운용사(스마트머니) 순매수 우위 국면 추정\n"
         except:
-            context += "- COT 데이터 동기화 대기 중\n"
+            context += "- COT 데이터 로드 실패\n"
 
     # =========================================================================
     # 5. 국내 파생 수급 (KRX)
@@ -198,7 +191,7 @@ def build_comprehensive_context() -> str:
             context += f"- 선물 종가: {last_krx.get('Futures_Close', 0)} pt ({last_krx.get('Change_Pct', 0):+.2f}%)\n"
             context += f"- 시장 베이시스: {last_krx.get('Market_Basis', 0):+.2f} pt\n"
             context += f"- 미결제약정: {int(last_krx.get('Open_Interest', 0)):,} 계약\n"
-            context += f"- 파생 수급 국면: {last_krx.get('Market_Phase', '')}\n"
+            context += f"- 파생 수급 국면: {last_krx.get('Market_Phase', '알수없음')}\n"
             context += f"- 한국판 COT Index: {float(last_krx.get('COT_OI_Index', 0)):.1f}%\n"
 
         df_inv = ks.get_krx_investor_derivatives_summary()
@@ -243,19 +236,20 @@ def render_ai_report_view():
     if st.button("🧠 전체 데이터 스캔 및 종합 AI 리포트 생성", use_container_width=True):
         with st.spinner(f"[{selected_engine}] 대시보드의 모든 실시간/확정 데이터를 취합하여 정밀 퀀트 분석을 수행하고 있습니다..."):
             context_data = build_comprehensive_context()
+            
+            # Context 데이터를 프롬프트 안에 묶어서 전달
+            full_prompt = f"현재 시각: {now_kst}\n\n{context_data}"
+            
             from services.ai_service import call_selected_ai_engine
             from services.prompts import COMPREHENSIVE_REPORT_PROMPT
-            res = call_selected_ai_engine(selected_engine, prompt=context_data, system_prompt=COMPREHENSIVE_REPORT_PROMPT)
+            res = call_selected_ai_engine(selected_engine, prompt=full_prompt, system_prompt=COMPREHENSIVE_REPORT_PROMPT)
             
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
             with st.container(border=True):
                 step_info = res.get("pipeline_step", "단일 호출 완료")
                 st.caption(f"⚡ **실행 엔진 파이프라인**: `{step_info}`")
                 st.divider()
-                
-                # 리포트 상단에 기준 시각 강제 고정 삽입
-                report_header = f"### 📅 데이터 수집 및 분석 기준 시각: {now_kst}\n\n"
-                st.markdown(report_header + res.get("response", "데이터 처리에 실패했습니다."))
+                st.markdown(res.get("response", "데이터 처리에 실패했습니다."))
                 
             with st.expander("🔍 AI에게 전달된 원본 통합 데이터(Context) 확인"):
                 st.code(context_data, language="markdown")
