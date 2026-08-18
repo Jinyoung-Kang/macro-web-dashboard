@@ -5,21 +5,54 @@ import streamlit as st
 # ==============================================================================
 # 0. Secret & 환경 변수 로드 헬퍼 및 API 설정
 # ==============================================================================
-def get_secret(key: str, default: str = "") -> str:
-    """Streamlit secrets 또는 환경변수에서 설정값 안전 로드"""
-    if hasattr(st, "secrets") and key in st.secrets:
-        return str(st.secrets[key])
-    return os.environ.get(key, default)
+def get_secret(key_path: str, default: str = "") -> str:
+    """Streamlit Secrets (중첩 섹션 및 단일 키 지원) 및 환경변수 안전 로드"""
+    try:
+        if hasattr(st, "secrets") and st.secrets:
+            # 1. 'section.key' 형태 탐색
+            keys = key_path.split(".")
+            val = st.secrets
+            found = True
+            for k in keys:
+                if hasattr(val, "get") and val.get(k) is not None:
+                    val = val.get(k)
+                elif hasattr(val, "__getitem__") and k in val:
+                    val = val[k]
+                else:
+                    found = False
+                    break
+            if found and val is not None:
+                return str(val).strip()
 
-# 앱 보안 비밀번호
-APP_PASSWORD = get_secret("APP_PASSWORD", "1234")
+            # 2. 단일 키 탐색
+            leaf = keys[-1]
+            if hasattr(st.secrets, "get") and st.secrets.get(leaf) is not None:
+                return str(st.secrets.get(leaf)).strip()
+            if hasattr(st.secrets, "get") and st.secrets.get(leaf.upper()) is not None:
+                return str(st.secrets.get(leaf.upper())).strip()
+    except Exception:
+        pass
+    return os.environ.get(key_path, os.environ.get(key_path.replace(".", "_").upper(), default))
 
-# KRX Open API 설정 ([krx] api_key 또는 KRX_AUTH_KEY 모두 호환)
-if hasattr(st, "secrets") and "krx" in st.secrets and isinstance(st.secrets["krx"], dict):
-    KRX_AUTH_KEY = st.secrets["krx"].get("api_key", st.secrets["krx"].get("auth_key", ""))
-else:
-    KRX_AUTH_KEY = get_secret("KRX_AUTH_KEY", "")
 
+def get_krx_key() -> str:
+    """
+    Streamlit Secrets의 [krx] api_key 또는 auth_key / KRX_AUTH_KEY 등 다양한 포맷 자동 탐색
+    """
+    key = get_secret("krx.api_key", "")
+    if not key:
+        key = get_secret("krx.auth_key", "")
+    if not key:
+        key = get_secret("KRX_AUTH_KEY", "")
+    if not key:
+        key = get_secret("krx_api_key", "")
+    return key
+
+# 앱 비밀번호
+APP_PASSWORD = get_secret("auth.password", get_secret("APP_PASSWORD", "admin1234@"))
+
+# KRX Open API 설정
+KRX_AUTH_KEY = get_krx_key()
 KRX_BASE_URL = "http://data-dbg.krx.co.kr/svc/apis"
 
 # ==============================================================================
@@ -165,7 +198,6 @@ LIVE_CLOCK_HTML = """
 <html>
 <head>
 <style>
-    /* 기본 리셋 및 다크 테마 폰트 설정 */
     body {
         margin: 0;
         padding: 0;
@@ -177,8 +209,6 @@ LIVE_CLOCK_HTML = """
         align-items: center;
         height: 100vh;
     }
-    
-    /* 시계 컨테이너 모던 UI */
     .clock-container {
         display: flex;
         gap: 24px;
@@ -188,8 +218,6 @@ LIVE_CLOCK_HTML = """
         border: 1px solid rgba(255,255,255,0.08);
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
-    
-    /* 시장 상태 뱃지 공통 스타일 */
     .market-badge {
         margin-left: 10px;
         padding: 3px 8px;
@@ -199,12 +227,10 @@ LIVE_CLOCK_HTML = """
         letter-spacing: 0.5px;
         display: inline-block;
     }
-    
-    /* 상태별 테마 컬러 */
-    .status-trading { background: rgba(16, 185, 129, 0.15); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.4); } /* 거래 중 */
-    .status-pre     { background: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); } /* 프리마켓 */
-    .status-post    { background: rgba(139, 92, 246, 0.15); color: #8B5CF6; border: 1px solid rgba(139, 92, 246, 0.4); } /* 애프터마켓 */
-    .status-closed  { background: rgba(107, 114, 128, 0.15); color: #9CA3AF; border: 1px solid rgba(107, 114, 128, 0.4); } /* 휴장 / 장 마감 */
+    .status-trading { background: rgba(16, 185, 129, 0.15); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .status-pre     { background: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); }
+    .status-post    { background: rgba(139, 92, 246, 0.15); color: #8B5CF6; border: 1px solid rgba(139, 92, 246, 0.4); }
+    .status-closed  { background: rgba(107, 114, 128, 0.15); color: #9CA3AF; border: 1px solid rgba(107, 114, 128, 0.4); }
 </style>
 </head>
 <body>
@@ -239,7 +265,6 @@ LIVE_CLOCK_HTML = """
                     const goodFriday = calculateGoodFriday(year);
                     if (goodFriday) holidaysUS.add(goodFriday);
                 }
-                
                 loadedYear = year;
             } catch (err) {
                 console.warn("Holiday API load fallback:", err);
@@ -307,7 +332,6 @@ LIVE_CLOCK_HTML = """
         function updateTime() {
             const now = new Date();
             const currentYear = now.getFullYear();
-            
             if (loadedYear !== currentYear) {
                 fetchHolidays(currentYear);
             }
