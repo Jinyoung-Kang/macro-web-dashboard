@@ -81,8 +81,8 @@ def clean_markdown_output(text: str) -> str:
     return text.strip()
 
 
-def _call_openai_format(provider: str, url: str, api_key: str, model: str, prompt: str, system_prompt: str = "You are a professional financial analyst. Always respond in fluent and clear Korean. Do not include introductory or explanatory phrases.", timeout: int = 40) -> dict:
-    """OpenAI 호환 API 공통 호출 내부 함수"""
+def _call_openai_format(provider: str, url: str, api_key: str, model: str, prompt: str, system_prompt: str = "You are a professional financial analyst. Always respond in fluent and clear Korean. Do not include introductory or explanatory phrases.", timeout: int = 90) -> dict:
+    """OpenAI 호환 API 공통 호출 내부 함수 (타임아웃 90초 설정)"""
     if not api_key:
         return {"status": False, "provider": provider, "model": model, "latency_ms": 0, "response": "API 키가 누락되었습니다."}
     
@@ -97,7 +97,7 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
             {"role": "user", "content": prompt}
         ], 
         "temperature": 0.2, 
-        "max_tokens": 3500
+        "max_tokens": 4000
     }
     
     start_time = time.time()
@@ -120,7 +120,7 @@ def _call_openai_format(provider: str, url: str, api_key: str, model: str, promp
 
 
 # ==========================================
-# 헬퍼 함수 1: NVIDIA GPT-OSS-20B 1순위 표 보존 번역기
+# 헬퍼 함수 1: NVIDIA GPT-OSS-20B 1순위 번역기 (90초 타임아웃)
 # ==========================================
 def translate_to_korean_via_nvidia(text: str, api_key: str) -> tuple[bool, str]:
     if not api_key or not text:
@@ -149,11 +149,11 @@ def translate_to_korean_via_nvidia(text: str, api_key: str) -> tuple[bool, str]:
             {"role": "user", "content": translate_prompt}
         ],
         "temperature": 0.1,
-        "max_tokens": 3500
+        "max_tokens": 4000
     }
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+        resp = requests.post(url, headers=headers, json=payload, timeout=90)
         if resp.status_code == 200:
             translated_text = resp.json()["choices"][0]["message"]["content"]
             return True, clean_markdown_output(translated_text)
@@ -164,7 +164,7 @@ def translate_to_korean_via_nvidia(text: str, api_key: str) -> tuple[bool, str]:
 
 
 # ==========================================
-# 헬퍼 함수 2: Cloudflare Llama-3.1-8B 2순위 표 보존 번역기
+# 헬퍼 함수 2: Cloudflare Llama-3.1-8B 2순위 번역기 (90초 타임아웃)
 # ==========================================
 def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: str) -> tuple[str, str]:
     if not account_id or not api_token or not text:
@@ -185,11 +185,11 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Translate to Korean maintaining all markdown tables and layout:\n\n{text}"}
         ],
-        "max_tokens": 3500
+        "max_tokens": 4000
     }
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+        resp = requests.post(url, headers=headers, json=payload, timeout=90)
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success"):
@@ -204,11 +204,11 @@ def translate_to_korean_via_cloudflare(text: str, account_id: str, api_token: st
 
 
 # ==========================================
-# 개별 API 테스트 함수 (4개 모델)
+# 개별 API 테스트 함수 (90초 타임아웃 통일)
 # ==========================================
 def test_nvidia_nemotron(api_key: str, prompt: str, system_prompt: str = None) -> dict:
     sys_prompt = system_prompt or INVESTMENT_AGENT_PROMPT
-    return _call_openai_format("NVIDIA NIM (Nemotron)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "nvidia/nemotron-3-super-120b-a12b", prompt, system_prompt=sys_prompt, timeout=60)
+    return _call_openai_format("NVIDIA NIM (Nemotron)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "nvidia/nemotron-3-super-120b-a12b", prompt, system_prompt=sys_prompt, timeout=90)
 
 
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prompt: str = None) -> dict:
@@ -221,11 +221,11 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prom
     
     english_system = (
         "You are an elite quantitative derivatives analyst and macro strategist. "
-        "Analyze the provided KOSPI 200 futures and options data. "
+        "Analyze the provided global market, macroeconomic, and derivatives data. "
         "ALWAYS respond in ENGLISH using strict, well-structured Markdown format with complete tables and bullet points. "
         "Preserve table formatting with explicit pipes and newlines."
     )
-    english_prompt = f"Analyze the following Korean derivatives and market data, and output your structured analysis in English:\n\n{prompt}"
+    english_prompt = f"Analyze the following global financial and market data in English:\n\n{prompt}"
     
     payload = {
         "messages": [
@@ -238,7 +238,7 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prom
     
     start_time = time.time()
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=60)
+        resp = requests.post(url, headers=headers, json=payload, timeout=90)
         latency = int((time.time() - start_time) * 1000)
         
         if resp.status_code == 200:
@@ -285,12 +285,12 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prom
 
 def test_nvidia_gpt_oss(api_key: str, prompt: str, system_prompt: str = None) -> dict:
     sys_prompt = system_prompt or INVESTMENT_AGENT_PROMPT
-    return _call_openai_format("NVIDIA NIM (GPT-OSS)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "openai/gpt-oss-20b", prompt, system_prompt=sys_prompt, timeout=60)
+    return _call_openai_format("NVIDIA NIM (GPT-OSS)", "https://integrate.api.nvidia.com/v1/chat/completions", api_key, "openai/gpt-oss-20b", prompt, system_prompt=sys_prompt, timeout=90)
 
 
 def test_cerebras(api_key: str, prompt: str, system_prompt: str = None) -> dict:
     sys_prompt = system_prompt or INVESTMENT_AGENT_PROMPT
-    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "llama-3.3-70b", prompt, system_prompt=sys_prompt, timeout=60)
+    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "llama-3.3-70b", prompt, system_prompt=sys_prompt, timeout=90)
 
 
 # ==========================================
@@ -358,7 +358,6 @@ def call_selected_ai_engine(engine_name: str, prompt: str, system_prompt: str = 
 
 
 def ask_investment_agent(prompt: str) -> str:
-    """일반 투자 에이전트 호출 래퍼 함수"""
     res = generate_ai_briefing_with_failover(prompt=prompt, system_prompt=INVESTMENT_AGENT_PROMPT)
     if isinstance(res, dict):
         return clean_markdown_output(res.get("response", "AI 응답을 생성하지 못했습니다."))
@@ -366,7 +365,6 @@ def ask_investment_agent(prompt: str) -> str:
 
 
 def ask_krx_cot_agent(prompt: str, engine_name: str = "자동 탐색") -> dict:
-    """국내 파생상품 & COT 전용 정밀 에이전트 호출 래퍼 함수 (엔진 직접 선택 지원)"""
     res = call_selected_ai_engine(engine_name, prompt=prompt, system_prompt=KRX_DERIVATIVES_PROMPT)
     if isinstance(res, dict):
         res["response"] = clean_markdown_output(res.get("response", "AI 응답을 생성하지 못했습니다."))
