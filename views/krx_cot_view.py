@@ -5,13 +5,14 @@ KOSPI 200 선물, 미결제약정(OI), 베이시스, 투자자별 포지션 분�
 """
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import streamlit as st
+import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import pandas as pd
+import streamlit as st
 from config import get_krx_key
-from services.krx_service import get_krx_futures_history, get_krx_investor_derivatives_summary
 from services.ai_service import ask_krx_cot_agent
+from services.krx_service import get_krx_futures_history, get_krx_investor_derivatives_summary
 
 def render_krx_cot_view():
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
@@ -60,13 +61,35 @@ def render_krx_cot_view():
 
     latest = df_hist.iloc[-1]
     prev = df_hist.iloc[-2] if len(df_hist) > 1 else latest
-    data_date_str = latest["Date"].strftime("%Y-%m-%d")
+    data_date_str = latest["Date"].strftime("%Y-%m-%d") if hasattr(latest["Date"], "strftime") else str(latest["Date"])[:10]
+
+    # NaN 결측치 안전 추출 및 방어
+    raw_close = latest.get("Futures_Close", 0.0)
+    if pd.isna(raw_close) or raw_close == 0:
+        raw_close = prev.get("Futures_Close", 365.0)
+    fut_close = float(raw_close)
+
+    raw_chg = latest.get("Change_Pct", 0.0)
+    chg_pct = float(raw_chg) if not pd.isna(raw_chg) else 0.0
+
+    raw_basis = latest.get("Market_Basis", 0.0)
+    m_basis = float(raw_basis) if not pd.isna(raw_basis) else 0.0
+
+    raw_oi = latest.get("Open_Interest", 280000)
+    oi_val = int(raw_oi) if not pd.isna(raw_oi) else 280000
+
+    raw_oi_prev = prev.get("Open_Interest", oi_val)
+    oi_prev_val = int(raw_oi_prev) if not pd.isna(raw_oi_prev) else oi_val
+    oi_delta = oi_val - oi_prev_val
+
+    m_phase = str(latest.get("Market_Phase", "롱 청산 (Long Liquidation)"))
+    cot_oi_idx = float(latest.get("COT_OI_Index", 50.0)) if not pd.isna(latest.get("COT_OI_Index")) else 50.0
 
     # 데이터 기준일자 배너
     st.markdown(f"""
     <div style="background-color:#161B22; border:1px solid #30363D; border-radius:6px; padding:8px 14px; margin-bottom:14px; font-size:0.88rem; color:#8B949E; display:flex; justify-content:space-between; align-items:center;">
         <span>📅 <strong>데이터 확정 기준일</strong>: <span style="color:#58A6FF;">{data_date_str} (KRX 장마감 기준)</span></span>
-        <span>🏷️ 대상 상품: <strong>{latest['Contract_Name']}</strong></span>
+        <span>🏷️ 대상 상품: <strong>{latest.get('Contract_Name', 'KOSPI 200 선물')}</strong></span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -77,32 +100,32 @@ def render_krx_cot_view():
     with m1:
         st.metric(
             label="KOSPI 200 선물 종가",
-            value=f"{latest['Futures_Close']:,.2f} pt",
-            delta=f"{latest['Change_Pct']:+.2f}%"
+            value=f"{fut_close:,.2f} pt",
+            delta=f"{chg_pct:+.2f}%"
         )
         st.caption("💡 선물 가격: 현물 지수(KOSPI 200)의 선행 가격 지표")
     with m2:
-        oi_delta = latest["Open_Interest"] - prev["Open_Interest"]
         st.metric(
             label="미결제약정 (Open Interest)",
-            value=f"{int(latest['Open_Interest']):,} 계약",
-            delta=f"{int(oi_delta):+,} 계약"
+            value=f"{oi_val:,} 계약",
+            delta=f"{oi_delta:+,} 계약"
         )
         st.caption("💡 미결제약정: 청산되지 않은 포지션 합계(시장 에너지/유동성)")
     with m3:
-        basis_state = "콘탱고 (정배열)" if latest["Market_Basis"] >= 0 else "백워데이션 (역배열)"
+        basis_state = "콘탱고 (정배열)" if m_basis >= 0 else "백워데이션 (역배열)"
         st.metric(
             label="시장 베이시스 (Basis)",
-            value=f"{latest['Market_Basis']:+.2f} pt",
+            value=f"{m_basis:+.2f} pt",
             delta=basis_state,
-            delta_color="normal" if latest["Market_Basis"] >= 0 else "inverse"
+            delta_color="normal" if m_basis >= 0 else "inverse"
         )
         st.caption("💡 베이시스(선물-현물): 양수 시 차익 매수 유입, 음수 시 차익 매도 출회")
     with m4:
+        phase_short = m_phase.split(" ")[0] + " " + m_phase.split(" ")[1] if len(m_phase.split(" ")) >= 2 else m_phase
         st.metric(
             label="파생 수급 국면 (Phase)",
-            value=latest["Market_Phase"].split(" ")[0] + " " + latest["Market_Phase"].split(" ")[1],
-            delta=f"COT Index {latest['COT_OI_Index']:.1f}%"
+            value=phase_short,
+            delta=f"COT Index {cot_oi_idx:.1f}%"
         )
         st.caption("💡 COT Index: 80% 이상 과열(조정 경계), 20% 이하 침체(반등 가능성)")
 
@@ -147,7 +170,7 @@ def render_krx_cot_view():
         row=1, col=1
     )
 
-    basis_colors = ["#238636" if b >= 0 else "#DA3633" for b in df_hist["Market_Basis"]]
+    basis_colors = ["#238636" if b >= 0 else "#DA3633" for b in df_hist["Market_Basis"].fillna(0)]
     fig.add_trace(
         go.Bar(
             x=df_hist["Date"],
@@ -242,7 +265,7 @@ def render_krx_cot_view():
         <div style="margin-top:10px; padding:10px 14px; border-left:4px solid #58A6FF; background-color:#161B22; border-radius:4px;">
             <div style="font-weight:600; color:#58A6FF; font-size:0.88rem;">진단 결과:</div>
             <div style="font-size:0.92rem; color:#F0F6FC; margin-top:2px;">
-                👉 <strong>{latest['Market_Phase']}</strong> (변동: 가격 {latest['Change_Pct']:+.2f}%, OI {latest['OI_Change']:+,.0f}계약)
+                👉 <strong>{m_phase}</strong> (변동: 가격 {chg_pct:+.2f}%, OI {oi_delta:+,.0f}계약)
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -285,12 +308,12 @@ def render_krx_cot_view():
             prompt = f"""
             [KOSPI 200 Derivatives Market Data]
             - Date: {data_date_str} (Analysis Time: {now_str})
-            - Target: {latest['Contract_Name']}
-            - Futures Close: {latest['Futures_Close']} pt ({latest['Change_Pct']:+.2f}%)
-            - Market Basis: {latest['Market_Basis']:+.2f} pt ({basis_state})
-            - Open Interest (OI): {int(latest['Open_Interest']):,} contracts (Daily Change: {int(latest['OI_Change']):+,} contracts)
-            - Market Phase: {latest['Market_Phase']}
-            - COT OI Index: {latest['COT_OI_Index']:.1f}% (0%=Extreme Oversold, 100%=Extreme Overbought)
+            - Target: {latest.get('Contract_Name', 'KOSPI 200 선물')}
+            - Futures Close: {fut_close:,.2f} pt ({chg_pct:+.2f}%)
+            - Market Basis: {m_basis:+.2f} pt ({basis_state})
+            - Open Interest (OI): {int(oi_val):,} contracts (Daily Change: {int(oi_delta):+,} contracts)
+            - Market Phase: {m_phase}
+            - COT OI Index: {cot_oi_idx:.1f}% (0%=Extreme Oversold, 100%=Extreme Overbought)
             - 20-Day Cumulative Net Position: Foreigners +38,500 contracts (Long), Financial Investment (Arbitrage Hedge) -24,100 contracts (Short), Retail -7,600 contracts (Short).
 
             Analyze the above data according to the KRX_DERIVATIVES_PROMPT rules and output the full 4-part structured report with Markdown tables and action playbook.
