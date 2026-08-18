@@ -10,6 +10,7 @@ import streamlit as st
 import yfinance as yf
 from services.ai_service import call_selected_ai_engine
 from services.prompts import COMPREHENSIVE_REPORT_PROMPT
+from services.liquidity_service import get_fed_liquidity_data
 
 def build_comprehensive_context() -> str:
     """대시보드의 5대 핵심 모듈 데이터를 안전하고 정밀하게 수집하는 Context 빌더"""
@@ -88,44 +89,35 @@ def build_comprehensive_context() -> str:
         context += f"- 매크로 데이터 로드 중 오류: {e}\n"
 
     # =========================================================================
-    # 2. 연준 순유동성 트래커 (FRED 원장 단위 Millions -> Trillions/Billions 완벽 교정)
+    # 2. 연준 순유동성 트래커 (liquidity_service 연동으로 안정 수집)
     # =========================================================================
     context += "\n#### 2. 연준 순유동성 트래커\n"
     try:
-        import services.macro_service as ms
-        walcl = ms.fetch_fred_series("WALCL")       # 단위: Millions ($M)
-        wtre = ms.fetch_fred_series("WTREGEN")     # 단위: Millions ($M)
-        rrp = ms.fetch_fred_series("RRPONTSYD")    # 단위: Billions ($B)
-        
-        if walcl is not None and wtre is not None and rrp is not None:
-            # RRP는 Billions 단위이므로 Millions로 맞춰서 계산
-            rrp_in_m = rrp['RRPONTSYD'] * 1000.0 if rrp['RRPONTSYD'].max() < 10000 else rrp['RRPONTSYD']
+        df_liq = get_fed_liquidity_data(period_years=5)
+        if df_liq is not None and not df_liq.empty:
+            last_liq = df_liq.iloc[-1]
+            prev_liq = df_liq.iloc[-2] if len(df_liq) >= 2 else last_liq
+            date_str = df_liq.index[-1].strftime('%Y-%m-%d') if hasattr(df_liq.index[-1], 'strftime') else str(df_liq.index[-1])[:10]
             
-            combined = pd.DataFrame({'WALCL': walcl['WALCL'], 'WTREGEN': wtre['WTREGEN'], 'RRP': rrp_in_m}).ffill().dropna()
-            combined['Net_Liquidity_M'] = combined['WALCL'] - combined['WTREGEN'] - combined['RRP']
+            walcl_t = last_liq.get('WALCL_T', last_liq.get('WALCL', 0) / 1e6)
+            walcl_chg_b = (walcl_t - prev_liq.get('WALCL_T', walcl_t)) * 1000.0
             
-            last_liq = combined.iloc[-1]
-            prev_liq = combined.iloc[-2] if len(combined) > 1 else last_liq
-            date_str = combined.index[-1].strftime('%Y-%m-%d')
+            tga_b = last_liq.get('WTREGEN_B', last_liq.get('WTREGEN', 0) / 1e3)
+            tga_chg_b = tga_b - prev_liq.get('WTREGEN_B', tga_b)
             
-            # 단위 환산: Millions -> Trillions($T) 및 Billions($B)
-            walcl_t = last_liq['WALCL'] / 1000000.0
-            walcl_chg_b = (last_liq['WALCL'] - prev_liq['WALCL']) / 1000.0
+            rrp_b = last_liq.get('RRP_B', last_liq.get('RRPONTSYD', 0))
+            rrp_chg_b = rrp_b - prev_liq.get('RRP_B', rrp_b)
             
-            wtre_b = last_liq['WTREGEN'] / 1000.0
-            wtre_chg_b = (last_liq['WTREGEN'] - prev_liq['WTREGEN']) / 1000.0
-            
-            rrp_b = last_liq['RRP'] / 1000.0
-            rrp_chg_b = (last_liq['RRP'] - prev_liq['RRP']) / 1000.0
-            
-            net_t = last_liq['Net_Liquidity_M'] / 1000000.0
-            net_chg_b = (last_liq['Net_Liquidity_M'] - prev_liq['Net_Liquidity_M']) / 1000.0
+            net_t = last_liq.get('Net_Liquidity_T', 0.0)
+            net_chg_b = (net_t - prev_liq.get('Net_Liquidity_T', net_t)) * 1000.0
             
             context += f"- 기준일: {date_str} (FRED 주간 공식 발표 데이터)\n"
             context += f"- 연준 총자산 (WALCL): ${walcl_t:.3f} T ({walcl_chg_b:+.1f} B WoW)\n"
-            context += f"- 재무부 일반계정 (TGA): ${wtre_b:.1f} B ({wtre_chg_b:+.1f} B WoW)\n"
+            context += f"- 재무부 일반계정 (TGA): ${tga_b:.1f} B ({tga_chg_b:+.1f} B WoW)\n"
             context += f"- 역레포 잔고 (ON RRP): ${rrp_b:.1f} B ({rrp_chg_b:+.1f} B WoW)\n"
             context += f"- 연준 순유동성 (Net Liquidity): ${net_t:.3f} T (주간 변동: {net_chg_b:+.1f} B)\n"
+        else:
+            context += "- 연준 순유동성 데이터 로드 대기 중\n"
     except Exception as e:
         context += f"- 연준 순유동성 로드 실패: {e}\n"
 
