@@ -9,6 +9,7 @@ from services.sec_service import fetch_sec_13f_multi_quarters, classify_qoq_acti
 def fetch_all_selected_histories(selected_institutions: dict, max_quarters: int = 8):
     """
     선택된 기관들의 13F 과거 분기 데이터를 수집하여 딕셔너리로 반환합니다.
+    (SEC EDGAR 타임아웃 및 차단 방어 로직 완벽 연동)
     """
     inst_histories = {}
     for inst_name, inst_info in selected_institutions.items():
