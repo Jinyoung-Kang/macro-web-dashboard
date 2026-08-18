@@ -1,14 +1,18 @@
-# views/sec_view.py
-import streamlit as st
-import plotly.graph_objects as go
-import plotly.express as px
-import pandas as pd
+"""
+views/sec_view.py
+📑 주요 기관들의 포트폴리오 (13F Holdings & QoQ Analysis)
+SEC EDGAR 공식 공시 데이터 기반 미국 주요 기관 투자자 포트폴리오 분석 & 기간별 비중 추적
+"""
 from collections import Counter
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
 from config import INSTITUTIONS
-from services.macro_service import fetch_ticker_data
-from services.sec_service import fetch_sec_13f_multi_quarters, classify_qoq_action
 from services.ai_service import call_selected_ai_engine
+from services.macro_service import fetch_ticker_data
 from services.prompts import SEC_13F_CONSENSUS_PROMPT
+from services.sec_service import classify_qoq_action, fetch_sec_13f_multi_quarters
 
 def render_sec_view():
     st.title("📑 주요 기관들의 포트폴리오 (13F Holdings & QoQ Analysis)")
@@ -29,7 +33,7 @@ def render_sec_view():
                     "🥇 1순위: NVIDIA Nemotron-3 Super (120B)",
                     "🥈 2순위: Cloudflare AI (DeepSeek-R1-32B)",
                     "🥉 3순위: NVIDIA GPT-OSS-20B",
-                    "🏅 4순위: Cerebras Cloud (GPT-OSS-120B)"
+                    "🏅 4순위: Cerebras Cloud (Llama-3.3)"
                 ],
                 key="sec_ai_engine_select"
             )
@@ -46,7 +50,6 @@ def render_sec_view():
                     hist, _ = fetch_sec_13f_multi_quarters(info['cik'], max_quarters=1)
                     if hist and len(hist) > 0:
                         top_df, _ = hist[0]
-                        # 기관별 상위 20개 종목 추출
                         top_tickers = top_df.head(20)['name'].tolist()
                         all_top_holdings.extend(top_tickers)
                 
@@ -67,24 +70,23 @@ def render_sec_view():
                     with st.spinner(f"'{ai_engine}' 엔진으로 13F 스마트머니 내러티브를 분석 중..."):
                         res = call_selected_ai_engine(ai_engine, user_prompt, SEC_13F_CONSENSUS_PROMPT)
 
-                    if res["status"]:
+                    if res.get("status"):
                         st.success(f"✅ 분석 완료 (엔진: {res['provider']} | 지연시간: {res['latency_ms']} ms)")
                         if "translation_info" in res:
                             st.caption(f"**번역 상태:** {res['translation_info']}")
-                        # AI 응답 출력
                         st.markdown(f"<div style='padding:1rem; border-radius:0.5rem; background-color:rgba(0,100,255,0.1);'>{res['response']}</div>", unsafe_allow_html=True)
                     else:
                         st.error("🔴 분석 생성 실패")
-                        st.caption(res["response"])
+                        st.caption(res.get("response", "응답 생성 실패"))
 
     st.divider()
 
     # ==========================================
-    # 기존 기능: 개별 기관 포트폴리오 분석
+    # 개별 기관 포트폴리오 분석 메인
     # ==========================================
     selected_inst_name = st.selectbox("분석할 기관을 선택하세요", options=list(INSTITUTIONS.keys()), index=0)
     inst_info = INSTITUTIONS[selected_inst_name]
-    st.info(f"💡 **기관 소개:** {inst_info['desc']} (SEC CIK: `{inst_info['cik']}`)", icon="ℹ️")
+    st.info(f"💡 **기관 소개:** {inst_info.get('desc', selected_inst_name)} (SEC CIK: `{inst_info['cik']}`)", icon="ℹ️")
 
     with st.spinner("SEC EDGAR에서 최근 분기별 13F 공시 데이터를 수집 및 분석 중입니다..."):
         all_history_results, err_msg = fetch_sec_13f_multi_quarters(inst_info['cik'], max_quarters=8)
@@ -137,7 +139,7 @@ def render_sec_view():
         "📊 상위 종목 비중 순위"
     ])
 
-    # TAB 1: 트리맵 (기준 날짜(분기) & 종목 수 선택 가능)
+    # TAB 1: 트리맵
     with tab_v1:
         st.markdown("#### ⚙️ 트리맵 조회 조건 설정")
         col_t1, col_t2 = st.columns([1, 1])
@@ -220,9 +222,16 @@ def render_sec_view():
             selected_top_n = st.selectbox("비교할 상위 종목 수 (Top N)", options=valid_top_n, index=0, format_func=lambda x: f"상위 Top {x}개 종목")
 
         active_history = all_history_results[:selected_q_count]
-        combined_hist = pd.concat([df_q.copy() for df_q, _ in active_history], ignore_index=True)
+        
+        # 분기별 데이터셋 결합
+        appended_list = []
+        for df_q, q_meta in active_history:
+            temp_df = df_q.copy()
+            temp_df['report_date'] = q_meta['report_date']
+            appended_list.append(temp_df)
+        combined_hist = pd.concat(appended_list, ignore_index=True)
+        
         default_top_tickers = latest_df.head(selected_top_n)['name'].tolist()
-
         custom_tickers = st.multiselect("특정 종목만 직접 선택하여 비교 (선택 시 상위 N 대신 아래 선택 종목만 표기)", options=latest_df['name'].tolist(), default=[])
         target_tickers = custom_tickers if custom_tickers else default_top_tickers
 
@@ -301,7 +310,7 @@ def render_sec_view():
         else:
             st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
 
-    # TAB 4: 상위 종목 비중 순위 (기준 날짜(분기) & 종목 수 선택 가능)
+    # TAB 4: 상위 종목 비중 순위
     with tab_v4:
         st.markdown("#### ⚙️ 상위 종목 비중 순위 조회 조건 설정")
         col_b1, col_b2 = st.columns([1, 1])
@@ -351,7 +360,7 @@ def render_sec_view():
 
     st.divider()
 
-    # 3. 전체 보유 종목 상세 표
+    # 전체 보유 지분 상세 목록
     st.subheader(f"📋 전체 보유 지분 상세 목록 (기준일: {meta['report_date']})")
     df_display = latest_df[['name', 'weight', 'value', 'shares', 'class', 'cusip']].copy()
     df_display.columns = ['종목명 (Issuer)', '비중 (%)', '평가액 ($)', '보유 주식수', '주식 종류', 'CUSIP']
