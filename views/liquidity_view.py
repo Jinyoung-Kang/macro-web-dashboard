@@ -57,7 +57,7 @@ def render_liquidity_view():
     prev_1m = df_liq.iloc[-5] if len(df_liq) >= 5 else prev_1w
     
     # YTD (연초 대비)
-    curr_year = latest.name.year
+    curr_year = latest.name.year if hasattr(latest.name, 'year') else datetime.now().year
     df_curr_year = df_liq[df_liq.index.year == curr_year]
     ytd_base = df_curr_year.iloc[0] if not df_curr_year.empty else latest
 
@@ -71,7 +71,7 @@ def render_liquidity_view():
     tga_curr_t = latest['WTREGEN_T']
     rrp_curr_b = latest['RRP_B']
 
-    latest_date_str = latest.name.strftime('%Y-%m-%d')
+    latest_date_str = latest.name.strftime('%Y-%m-%d') if hasattr(latest.name, 'strftime') else str(latest.name)[:10]
 
     # ==========================================================================
     # 1. 상단 핵심 메트릭 카드 (4열 배치)
@@ -220,7 +220,7 @@ def render_liquidity_view():
     # --------------------------------------------------------------------------
     # TAB 2: 3대 구성요소 추이
     # --------------------------------------------------------------------------
-    with tab_2 := tab2:
+    with tab2:
         st.markdown("#### 📊 순유동성 3대 구성요소 분해 추이")
         sub_period = st.selectbox("분해 차트 기간 선택", ["1년", "2년", "3년", "5년", "10년"], index=3, key="sub_period_sel")
         days_sub = PERIOD_MAP[sub_period]
@@ -250,7 +250,7 @@ def render_liquidity_view():
     # --------------------------------------------------------------------------
     # TAB 3: 작동 원리 가이드
     # --------------------------------------------------------------------------
-    with tab_3 := tab3:
+    with tab3:
         st.markdown("### 📖 연준 순유동성 (Fed Net Liquidity) 모델 가이드")
         st.markdown("""
         **연준 순유동성 공식**:
