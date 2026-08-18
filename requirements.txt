@@ -6,3 +6,4 @@ yfinance
 plotly
 streamlit-autorefresh
 urllib3
+pykrx
