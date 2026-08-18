@@ -1,193 +1,240 @@
-# views/radar_view.py
+"""
+views/radar_view.py
+📡 외국인/기관 정밀 수급 레이더 뷰
+실시간/장마감 시장 수급 트리맵 및 30영업일 영점조정 누적 수급 분석
+"""
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import streamlit as st
-import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from services.radar_service import fetch_investor_top_stocks, fetch_kis_ticker_investor_trend
-from services.kis_service import fetch_kis_kospi_index
+import pandas as pd
+from services.radar_service import get_market_radar_scanner, get_stock_cumulative_flow
 
 def render_radar_view():
-    st.title("📡 정밀 수급 레이더 (Flow Radar)")
-    st.caption("LS증권(실시간 시장 스캐닝)과 KIS증권(종목 정밀 시계열) 정식 API를 활용한 무결성 수급 분석")
-
-    # 1. 상단 KIS API 마켓 인덱스 확인
-    with st.spinner("시장 지표 동기화 중..."):
-        kospi_data, _ = fetch_kis_kospi_index()
-    if kospi_data:
-        st.markdown(f"**현재 코스피 지수:** `{kospi_data['price']:,.2f} pt` (전일비 {kospi_data['diff']:+.2f} pt / {kospi_data['rate']:+.2f}%)")
+    # KST 기준 시각 및 장 상태 정확 판정
+    now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    weekday = now_kst.weekday() # 0: 월 ~ 6: 일
+    time_num = now_kst.hour * 100 + now_kst.minute
     
-    # ---------------------------------------------------------
-    # 2. [신규] 코스피 시장 30영업일 누적 수급 흐름 (대장주 프록시 기법)
-    # ---------------------------------------------------------
-    with st.spinner("코스피 방향성 누적 차트 구성 중..."):
-        # 시장 지수 전용 API가 차단되었으므로, 지수와 동기화되는 대장주(005930)를 프록시로 활용
-        df_proxy, err_proxy = fetch_kis_ticker_investor_trend("005930")
-        
-    if err_proxy:
-        st.warning(f"시장 누적 수급 동향을 불러올 수 없습니다: {err_proxy}")
-    elif df_proxy is not None and not df_proxy.empty:
-        st.markdown("##### 📈 코스피 30영업일 누적 수급 흐름 (대장주 프록시 지표)")
-        st.caption("※ 증권사 API 제한을 우회하기 위해 시장을 주도하는 대장주의 누적 수급을 추적합니다. **가장 오래된 과거(30일 전)를 '0'으로 영점 조정**하여 시장 매집/분산 방향을 파악합니다.")
-        
-        # 📌 30일 전 데이터를 0으로 맞추는 핵심 누적합 연산
-        df_proxy['f_cum'] = df_proxy['foreign'].cumsum() - df_proxy['foreign'].iloc[0]
-        df_proxy['i_cum'] = df_proxy['inst'].cumsum() - df_proxy['inst'].iloc[0]
-        df_proxy['r_cum'] = df_proxy['retail'].cumsum() - df_proxy['retail'].iloc[0]
-        
-        fig_mkt = go.Figure()
-        fig_mkt.add_trace(go.Scatter(x=df_proxy['date'], y=df_proxy['f_cum'], mode="lines", name="외국인 누적", line=dict(color="#3B82F6", width=3)))
-        fig_mkt.add_trace(go.Scatter(x=df_proxy['date'], y=df_proxy['i_cum'], mode="lines", name="기관 누적", line=dict(color="#F97316", width=3)))
-        fig_mkt.add_trace(go.Scatter(x=df_proxy['date'], y=df_proxy['r_cum'], mode="lines", name="개인 누적", line=dict(color="#10B981", width=3)))
-        
-        fig_mkt.update_layout(
-            height=300,
-            hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=10, r=10, t=10, b=10)
-        )
-        # 0점 기준선을 명확히 표시
-        fig_mkt.update_yaxes(title_text="누적 순매수 (주)", zeroline=True, zerolinewidth=2, zerolinecolor='rgba(255,255,255,0.5)')
-        
-        st.plotly_chart(fig_mkt, use_container_width=True)
+    if weekday in [5, 6]:
+        market_status_text = "⚪ 주말 휴장 (최근 거래일 확정 수급)"
+        status_color = "#8B949E"
+    elif 900 <= time_num < 1530:
+        market_status_text = "🟢 코스피/코스닥 정규장 (실시간 수급 집계 중)"
+        status_color = "#3FB950"
+    elif 1530 <= time_num <= 1800:
+        market_status_text = "🟣 시간외 단일가 / 애프터마켓 (당일 최종 누적 수급)"
+        status_color = "#A371F7"
+    else:
+        market_status_text = "⚪ 장 마감 (당일 확정 수급 집계)"
+        status_color = "#8B949E"
 
-    st.divider()
+    st.markdown(f"""
+    <div style="padding: 4px 0 12px 0;">
+        <h2 style="margin:0; font-weight: 700; color: #F0F6FC;">
+            📡 외국인/기관 수급 레이더 (코스피 & 코스닥)
+        </h2>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+            <span style="color: #8B949E; font-size: 0.92rem;">
+                실시간 및 장마감 투자 주체별(외국인/기관/개인/연기금) 자금 유출입 스캐닝 & 종목별 영점조정 누적 수급
+            </span>
+            <span style="background-color:rgba(255,255,255,0.06); border:1px solid #30363D; border-radius:4px; padding:3px 10px; font-size:0.84rem; color:{status_color}; font-weight:600;">
+                {market_status_text}
+            </span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # 3. 2단 탭 구성
-    tab1, tab2 = st.tabs([
-        "⚡ 실시간 시장 수급 레이더 (LS API)", 
-        "🔍 개별 종목 수급 정밀 분석 (KIS API)"
-    ])
+    tab1, tab2 = st.tabs(["📊 시장 전체 수급 스캐너", "🔍 개별 종목 수급 정밀 분석 (영점조정)"])
 
-    # ==========================================
-    # [Tab 1] 실시간 당일 레이더
-    # ==========================================
+    # ==========================================================================
+    # TAB 1: 시장 전체 수급 스캐너
+    # ==========================================================================
     with tab1:
-        st.markdown("#### ⚙️ 시장 스캐닝 설정")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            market = st.selectbox("조회 시장", ["코스피", "코스닥"], index=0, key="t1_m")
-            ls_market = "1" if market == "코스피" else "2"
-        with col2:
-            investor = st.selectbox("투자자 주체", ["외국인", "기관", "개인"], index=0, key="t1_i")
-            ls_investor = "1" if investor == "외국인" else "2" if investor == "기관" else "3"
-        with col3:
-            trade_type = st.selectbox("매매 동향", ["순매수 (자금 유입)", "순매도 (자금 이탈)"], index=0, key="t1_t")
-            clean_trade = "순매수" if "순매수" in trade_type else "순매도"
-            ls_trade = "1" if clean_trade == "순매수" else "2"
-
-        with st.spinner("당일 실시간 수급 스캐닝 중..."):
-            df_day, err_day = fetch_investor_top_stocks(ls_market, ls_investor, ls_trade)
-        
-        if err_day:
-            st.error(err_day)
-        elif df_day is None or df_day.empty or df_day['svalue'].abs().sum() == 0:
-            st.warning("⚠️ **장 마감/주말 상태:** 현재 실시간 데이터가 0으로 초기화되었습니다. 평일 정규장(09:00~15:30)에 정상 작동합니다. 과거 수급 분석은 **[개별 종목 정밀 분석]** 탭을 이용하십시오.")
-        else:
-            plot_df = df_day.copy()
-            plot_df['plot_value'] = plot_df['svalue'].fillna(0).abs()
-            plot_df = plot_df[plot_df['plot_value'] > 0]
-
-            if not plot_df.empty:
-                fig = px.treemap(
-                    plot_df,
-                    path=[px.Constant(f"{market} {investor} Top 50"), 'hname'],
-                    values='plot_value',
-                    color='diff',
-                    custom_data=['svalue'],
-                    color_continuous_scale=['#3B82F6', '#94A3B8', '#EF4444'],
-                    color_continuous_midpoint=0,
-                )
-                fig.update_traces(
-                    texttemplate="<b>%{label}</b><br>%{customdata[0]:,.0f}백만<br>%{color:+.2f}%",
-                    hovertemplate="<b>%{label}</b><br>순금액: %{customdata[0]:,.0f} 백만원<br>등락률: %{color:+.2f}%<extra></extra>"
-                )
-                fig.update_layout(height=500, margin=dict(l=10, r=10, t=30, b=10))
-                st.plotly_chart(fig, use_container_width=True)
-
-            disp_df = df_day[['rank', 'hname', 'price', 'diff', 'svalue']].copy()
-            disp_df.columns = ['순위', '종목명', '종가(원)', '등락률(%)', '당일 금액(백만원)']
-            disp_df['종가(원)'] = disp_df['종가(원)'].map('{:,.0f}'.format)
-            disp_df['등락률(%)'] = disp_df['등락률(%)'].map('{:+.2f}%'.format)
-            disp_df['당일 금액(백만원)'] = disp_df['당일 금액(백만원)'].map('{:,.0f}'.format)
-            st.dataframe(disp_df, use_container_width=True, hide_index=True)
-
-    # ==========================================
-    # [Tab 2] 개별 종목 수급 시계열 (KIS API)
-    # ==========================================
-    with tab2:
-        st.markdown("#### 🔍 종목 정밀 추적")
-        st.caption("특정 종목의 최근 30영업일 투자자별 순매수 수량(주) 및 주가 변동을 분석합니다.")
-        
-        c1, c2 = st.columns([2, 1])
+        c1, c2, c3, c4 = st.columns([1.2, 1.2, 1.2, 1])
         with c1:
-            target_code = st.text_input("조회할 종목코드 (6자리)", value="005930")
+            market_sel = st.selectbox("시장 구분", options=["KOSPI (코스피)", "KOSDAQ (코스닥)"], index=0)
         with c2:
-            st.write("")
-            analyze_btn = st.button("차트 분석 실행", type="primary", use_container_width=True)
+            investor_sel = st.selectbox("투자 주체", options=["외국인", "기관", "연기금", "금융투자", "투신", "개인"], index=0)
+        with c3:
+            trade_sel = st.selectbox("매매 방향", options=["순매수", "순매도"], index=0)
+        with c4:
+            top_n = st.selectbox("표시 종목 수", options=[15, 30, 50], index=1)
+
+        market_key = "KOSPI" if "KOSPI" in market_sel else "KOSDAQ"
+        df_radar = get_market_radar_scanner(market=market_key, investor=investor_sel, trade_type=trade_sel, top_n=top_n)
+
+        if df_radar.empty:
+            st.warning("수급 데이터를 가져오는 중입니다. 잠시 후 다시 시도해주세요.")
+        else:
+            # 상단 메트릭 요약
+            top1 = df_radar.iloc[0]
+            total_top_amt = df_radar["순매수대금(억)"].sum()
             
-        if target_code:
-            with st.spinner("해당 종목의 30영업일 시계열 데이터를 불러오는 중..."):
-                df_ticker, err_ticker = fetch_kis_ticker_investor_trend(target_code.strip())
+            sc1, sc2, sc3 = st.columns(3)
+            with sc1:
+                st.metric(label=f"1위 집중 종목 ({investor_sel} {trade_sel})", value=f"{top1['종목명']}", delta=f"{top1['순매수대금(억)']:+,.1f} 억")
+            with sc2:
+                st.metric(label=f"상위 {len(df_radar)}개사 합산 {trade_sel} 규모", value=f"{total_top_amt:+,.1f} 억원")
+            with sc3:
+                st.metric(label="데이터 갱신 시각 (KST)", value=now_kst.strftime("%H:%M:%S"))
+
+            st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+
+            # 수급 트리맵 시각화 (절대 금액 크기 비례, 등락률 컬러)
+            st.markdown(f"#### 🗺️ {investor_sel} {trade_sel} 상위 종목 맵 (Treemap)")
             
-            if err_ticker:
-                st.error(err_ticker)
-            elif df_ticker is not None and not df_ticker.empty:
-                
-                # 차트 1: 일별 수급 및 주가 변동
-                st.markdown("##### 📊 일별 수급 및 주가 변동")
-                fig_daily = make_subplots(specs=[[{"secondary_y": True}]])
-                
-                fig_daily.add_trace(go.Bar(x=df_ticker['date'], y=df_ticker['foreign'], name="외국인(일별)", marker_color="#3B82F6", opacity=0.8), secondary_y=False)
-                fig_daily.add_trace(go.Bar(x=df_ticker['date'], y=df_ticker['inst'], name="기관(일별)", marker_color="#F97316", opacity=0.8), secondary_y=False)
-                fig_daily.add_trace(go.Bar(x=df_ticker['date'], y=df_ticker['retail'], name="개인(일별)", marker_color="#10B981", opacity=0.8), secondary_y=False)
-                
-                fig_daily.add_trace(go.Scatter(x=df_ticker['date'], y=df_ticker['close'], mode="lines+markers", name="종가(우축)", line=dict(color="#EF4444", width=2.5), marker=dict(size=5)), secondary_y=True)
+            df_radar["Abs_Amt"] = df_radar["순매수대금(억)"].abs()
+            fig_tree = px.treemap(
+                df_radar,
+                path=["종목명"],
+                values="Abs_Amt",
+                color="등락률(%)",
+                color_continuous_scale=["#388BFD", "#161B22", "#F85149"],
+                color_continuous_midpoint=0.0,
+                hover_data={"종목코드": True, "현재가": ":,.0f", "순매수대금(억)": ":+,.1f", "등락률(%)": ":+.2f"},
+                height=460
+            )
+            fig_tree.update_layout(
+                paper_bgcolor="#0D1117",
+                plot_bgcolor="#161B22",
+                margin=dict(l=10, r=10, t=20, b=10)
+            )
+            st.plotly_chart(fig_tree, use_container_width=True)
 
-                fig_daily.update_layout(
-                    height=450,
-                    barmode="group",
-                    hovermode="x unified",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                    margin=dict(l=20, r=20, t=20, b=20)
+            # 상세 랭킹 테이블
+            st.markdown(f"#### 📋 {investor_sel} {trade_sel} 상위 {len(df_radar)}개 종목 리스트")
+            st.dataframe(
+                df_radar[["순위", "종목코드", "종목명", "현재가", "등락률(%)", "순매수대금(억)"]],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "현재가": st.column_config.NumberColumn(format="%d 원"),
+                    "등락률(%)": st.column_config.NumberColumn(format="%+.2f%%"),
+                    "순매수대금(억)": st.column_config.NumberColumn(format="%+,.1f 억")
+                }
+            )
+
+    # ==========================================================================
+    # TAB 2: 개별 종목 수급 정밀 분석 (영점조정 누적 수급 흐름도)
+    # ==========================================================================
+    with tab2:
+        col_in1, col_in2 = st.columns([2, 1])
+        with col_in1:
+            stock_code_input = st.selectbox(
+                "분석 대상 종목 선택",
+                options=[
+                    ("005930", "삼성전자"),
+                    ("000660", "SK하이닉스"),
+                    ("005380", "현대차"),
+                    ("035420", "NAVER"),
+                    ("068270", "셀트리온"),
+                    ("000270", "기아"),
+                    ("105560", "KB금융"),
+                    ("051910", "LG화학")
+                ],
+                format_func=lambda x: f"{x[1]} ({x[0]})",
+                index=0
+            )
+        with col_in2:
+            cum_days = st.selectbox("수급 추적 기간 (영업일)", options=[20, 30, 60, 90], index=1)
+
+        selected_code = stock_code_input[0]
+        selected_name = stock_code_input[1]
+
+        df_cum = get_stock_cumulative_flow(stock_code=selected_code, days=cum_days)
+
+        if not df_cum.empty:
+            st.markdown(f"#### 📈 {selected_name} ({selected_code}) {cum_days}영업일 영점조정 누적 수급 곡선")
+            
+            # Plotly 2축 복합 시계열 차트
+            fig_cum = make_subplots(
+                rows=2, cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.08,
+                row_heights=[0.65, 0.35],
+                subplot_titles=(
+                    f"{selected_name} 주가 vs 주체별 누적 순매수 (영점 = {cum_days}일 전)",
+                    "일별 순매수 규모 (억 원)"
                 )
-                fig_daily.update_yaxes(title_text="순매수 수량 (주)", secondary_y=False, zeroline=True, zerolinewidth=1.5, zerolinecolor='rgba(255,255,255,0.3)')
-                fig_daily.update_yaxes(title_text="종가 (원)", secondary_y=True, showgrid=False)
-                
-                st.plotly_chart(fig_daily, use_container_width=True)
+            )
 
-                # 차트 2: 최근 30영업일 누적 수급 흐름
-                st.markdown("##### 📈 최근 30영업일 누적 수급 동향")
-                st.caption("30영업일 전을 기점(0)으로 영점 조정하여, 주체별 자금 매집/분산 누적 흐름을 파악합니다.")
-                
-                # 📌 30일 전 데이터를 0으로 맞추는 핵심 누적합 연산
-                df_ticker['foreign_cum'] = df_ticker['foreign'].cumsum() - df_ticker['foreign'].iloc[0]
-                df_ticker['inst_cum'] = df_ticker['inst'].cumsum() - df_ticker['inst'].iloc[0]
-                df_ticker['retail_cum'] = df_ticker['retail'].cumsum() - df_ticker['retail'].iloc[0]
+            # 1단: 주가 (우측 Y축)
+            fig_cum.add_trace(
+                go.Scatter(
+                    x=df_cum["Date"],
+                    y=df_cum["Close"],
+                    name="주가 (종가)",
+                    line=dict(color="#C9D1D9", width=1.5, dash="dot"),
+                    yaxis="y2"
+                ),
+                row=1, col=1
+            )
 
-                fig_cum = go.Figure()
-                fig_cum.add_trace(go.Scatter(x=df_ticker['date'], y=df_ticker['foreign_cum'], mode="lines", name="외국인 누적", line=dict(color="#3B82F6", width=3)))
-                fig_cum.add_trace(go.Scatter(x=df_ticker['date'], y=df_ticker['inst_cum'], mode="lines", name="기관 누적", line=dict(color="#F97316", width=3)))
-                fig_cum.add_trace(go.Scatter(x=df_ticker['date'], y=df_ticker['retail_cum'], mode="lines", name="개인 누적", line=dict(color="#10B981", width=3)))
+            # 1단: 외국인 누적 수급
+            fig_cum.add_trace(
+                go.Scatter(
+                    x=df_cum["Date"],
+                    y=df_cum["Foreigner_Cum"],
+                    name="외국인 누적(억)",
+                    line=dict(color="#F85149", width=2.5)
+                ),
+                row=1, col=1
+            )
 
-                fig_cum.update_layout(
-                    height=400,
-                    hovermode="x unified",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                    margin=dict(l=20, r=20, t=20, b=20)
+            # 1단: 기관 누적 수급
+            fig_cum.add_trace(
+                go.Scatter(
+                    x=df_cum["Date"],
+                    y=df_cum["Institution_Cum"],
+                    name="기관 누적(억)",
+                    line=dict(color="#58A6FF", width=2)
+                ),
+                row=1, col=1
+            )
+
+            # 1단: 개인 누적 수급
+            fig_cum.add_trace(
+                go.Scatter(
+                    x=df_cum["Date"],
+                    y=df_cum["Retail_Cum"],
+                    name="개인 누적(억)",
+                    line=dict(color="#E3B341", width=1.5)
+                ),
+                row=1, col=1
+            )
+
+            # 2단: 외국인 일별 순매수 바차트
+            fig_cum.add_trace(
+                go.Bar(
+                    x=df_cum["Date"],
+                    y=df_cum["Foreigner_Daily"],
+                    name="외인 일별(억)",
+                    marker_color=["#F85149" if v >= 0 else "#388BFD" for v in df_cum["Foreigner_Daily"]]
+                ),
+                row=2, col=1
+            )
+
+            fig_cum.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#0D1117",
+                plot_bgcolor="#161B22",
+                height=650,
+                margin=dict(l=30, r=40, t=50, b=30),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                hovermode="x unified"
+            )
+            fig_cum.update_yaxes(title_text="누적 금액 (억 원)", row=1, col=1, gridcolor="#21262D")
+            fig_cum.update_yaxes(title_text="일별 (억 원)", row=2, col=1, gridcolor="#21262D")
+
+            st.plotly_chart(fig_cum, use_container_width=True)
+
+            # 일별 데이터 테이블
+            with st.expander("📄 일별 수급 및 주가 원장 데이터 확인", expanded=False):
+                st.dataframe(
+                    df_cum.sort_values("Date", ascending=False),
+                    use_container_width=True,
+                    hide_index=True
                 )
-                fig_cum.update_yaxes(title_text="누적 순매수 (주)", zeroline=True, zerolinewidth=2, zerolinecolor='rgba(255,255,255,0.5)')
-                
-                st.plotly_chart(fig_cum, use_container_width=True)
-
-                # 상세 표 출력
-                st.markdown("##### 📋 일자별 상세 수급 내역 (단위: 주)")
-                disp_ticker = df_ticker.sort_values('date', ascending=False).copy()
-                disp_ticker['date'] = disp_ticker['date'].dt.strftime('%Y-%m-%d')
-                
-                disp_ticker = disp_ticker[['date', 'close', 'foreign', 'inst', 'retail']]
-                disp_ticker.columns = ['일자', '종가(원)', '외국인 순매수(주)', '기관 순매수(주)', '개인 순매수(주)']
-                
-                for c in disp_ticker.columns[1:]:
-                    disp_ticker[c] = disp_ticker[c].map('{:,.0f}'.format)
-                st.dataframe(disp_ticker, use_container_width=True, hide_index=True)
