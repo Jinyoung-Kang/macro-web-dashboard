@@ -82,23 +82,55 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
         vix_hist, move_hist, hy_df, cp_spread_df, stlfsi_df, now_str_kst
     )
 
-    header_left, header_right = st.columns([3, 1])
+    header_left, header_right = st.columns([2.8, 1.2])
     with header_left:
         st.title("📊 Global Macro Dashboard")
         st.caption(f"최근 데이터 갱신 시각: {now_str_kst} (KST) | 갱신 주기: {refresh_interval}초")
 
+    # ==============================================================================
+    # 우측 상단 나란히 2개의 버튼 배치 (일반 텍스트 & AI 텍스트)
+    # ==============================================================================
     with header_right:
         st.write("")
+        # 버튼 1: 기존 일반 텍스트 브리핑
         with st.popover("📋 텍스트 브리핑 보기 / 복사", use_container_width=True):
             st.markdown("**현재 시세 텍스트 종합 브리핑**")
             st.caption("우측 상단 복사 아이콘(📋)을 눌러 즉시 복사하세요.")
             st.code(report_text, language="text")
+            
+        # 버튼 2: 신규 AI 종합 데이터 분석 브리핑 (버튼 1 바로 밑에 생성)
+        with st.popover("🤖 AI로 텍스트 브리핑 생성 / 복사", use_container_width=True):
+            st.markdown("**🤖 AI 기반 통합 데이터 브리핑**")
+            st.caption(f"대시보드 전역의 최신 데이터를 취합하여 즉시 분석합니다.\n(기준 시각: {now_str_kst})")
+            
+            engine_options = [
+                "자동 탐색 (Failover 무중단)", "NVIDIA NIM (Nemotron-3-Super)", 
+                "Cloudflare (DeepSeek-R1 번역)", "NVIDIA NIM (GPT-OSS-20B)", "Cerebras Cloud (Llama-3.3)"
+            ]
+            macro_ai_engine = st.selectbox("AI 분석 엔진 선택", options=engine_options, index=0, key="popover_ai_engine")
+            
+            if st.button("🧠 브리핑 생성", key="btn_macro_ai_popover", use_container_width=True):
+                with st.spinner(f"[{macro_ai_engine}] 5대 핵심 지표 데이터를 수집 및 분석 중입니다..."):
+                    try:
+                        from views.ai_report_view import build_comprehensive_context
+                        from services.ai_service import call_selected_ai_engine
+                        from services.prompts import COMPREHENSIVE_REPORT_PROMPT
+                        
+                        context_data = build_comprehensive_context()
+                        res = call_selected_ai_engine(macro_ai_engine, prompt=context_data, system_prompt=COMPREHENSIVE_REPORT_PROMPT)
+                        
+                        ai_text = f"**[📅 데이터 수집 및 분석 기준 시각: {now_str_kst}]**\n\n" + res.get("response", "데이터 처리에 실패했습니다.")
+                        st.markdown(ai_text)
+                        
+                        st.divider()
+                        st.markdown("**📋 전체 복사용 텍스트**")
+                        st.code(ai_text, language="markdown")
+                    except Exception as e:
+                        st.error(f"AI 브리핑 생성 실패: {e}")
 
     st.divider()
 
-    # ==============================================================================
     # 1. 메인 시세 요약 카드
-    # ==============================================================================
     st.subheader("실시간/최근 시세 요약")
     st.info("💡 **변동 수치(+/-) 기준:** 각 지표 하단의 수치는 '직전 거래일 공식 종가(Previous Close) 대비 등락폭과 등락률(%)'입니다.", icon="ℹ️")
 
@@ -124,9 +156,7 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
 
     st.divider()
 
-    # ==============================================================================
     # 2. 10Y-2Y 장단기 금리차
-    # ==============================================================================
     st.subheader("📊 10Y-2Y 장단기 금리차의 핵심 해석 모델")
     st.markdown("미국채 10년물(장기 금리)에서 2년물(단기 금리)을 뺀 값은 채권 시장에서 가장 주목하는 **경기 선행 지표**입니다.")
     st.code("스프레드(Spread) = 장기 금리(미래 경기 전망) - 단기 금리(현재 통화 정책)", language="text")
@@ -383,48 +413,3 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
         if norm_mode == "수익률/변동률(%) 기준":
             fig_multi.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.7)
         st.plotly_chart(fig_multi, use_container_width=True)
-
-    st.divider()
-
-    # ==============================================================================
-    # 6. 신규 분리 기능: AI 종합 텍스트 브리핑 (메인 화면 하단 배치)
-    # ==============================================================================
-    st.markdown("#### 🤖 AI로 텍스트 브리핑 생성 및 복사")
-    st.caption("대시보드 내 **모든 핵심 데이터**(매크로, 유동성, 로테이션, 스마트머니, 파생수급)를 취합하여 지정한 AI 엔진으로 브리핑 텍스트를 즉시 생성합니다.")
-    
-    engine_options = [
-        "자동 탐색 (Failover 무중단)",
-        "NVIDIA NIM (Nemotron-3-Super)",
-        "Cloudflare (DeepSeek-R1 번역)",
-        "NVIDIA NIM (GPT-OSS-20B)",
-        "Cerebras Cloud (Llama-3.3)"
-    ]
-    
-    col_ai1, col_ai2 = st.columns([1, 2])
-    with col_ai1:
-        macro_ai_engine = st.selectbox("AI 분석 엔진 선택", options=engine_options, index=0, key="bottom_macro_ai_engine")
-        
-    if st.button("🧠 5대 지표 취합 및 AI 텍스트 브리핑 실행", use_container_width=True):
-        with st.spinner(f"[{macro_ai_engine}] 대시보드 전체 데이터를 수집하여 정밀 분석을 수행하고 있습니다..."):
-            try:
-                from views.ai_report_view import build_comprehensive_context
-                from services.ai_service import call_selected_ai_engine
-                from services.prompts import COMPREHENSIVE_REPORT_PROMPT
-                
-                context_data = build_comprehensive_context()
-                res = call_selected_ai_engine(macro_ai_engine, prompt=context_data, system_prompt=COMPREHENSIVE_REPORT_PROMPT)
-                
-                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                with st.container(border=True):
-                    step_info = res.get("pipeline_step", "단일 호출 완료")
-                    st.caption(f"⚡ **실행 엔진 파이프라인**: `{step_info}`")
-                    st.divider()
-                    
-                    ai_text = res.get("response", "데이터 처리에 실패했습니다.")
-                    st.markdown(ai_text)
-                    st.code(ai_text, language="markdown")
-                    
-                with st.expander("🔍 AI에게 전달된 원본 통합 데이터(Context) 확인"):
-                    st.code(context_data, language="markdown")
-            except Exception as e:
-                st.error(f"AI 브리핑 생성 실패: {e}")
