@@ -10,7 +10,6 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 def get_secret(key_path: str, default: str = "") -> str:
-    """Streamlit Secrets 및 환경변수 안전 로드"""
     try:
         if hasattr(st, "secrets") and st.secrets:
             keys = key_path.split(".")
@@ -45,7 +44,6 @@ KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_kis_access_token() -> str:
-    """KIS OAuth 2.0 Access Token 발급 및 캐싱"""
     app_key = get_secret("kis.app_key", get_secret("KIS_APP_KEY", ""))
     app_secret = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", ""))
     
@@ -70,7 +68,6 @@ def get_kis_access_token() -> str:
 
 
 def call_kis_api(tr_id: str, endpoint: str, params: dict) -> dict:
-    """KIS API GET 공통 호출기"""
     token = get_kis_access_token()
     app_key = get_secret("kis.app_key", get_secret("KIS_APP_KEY", ""))
     app_secret = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", ""))
@@ -98,16 +95,14 @@ def call_kis_api(tr_id: str, endpoint: str, params: dict) -> dict:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_kis_kospi_index() -> dict:
+def fetch_kis_kospi_index() -> tuple:
     """
-    한국투자증권(KIS) API를 사용하여 코스피 업종(지수) 현재가를 조회
-    (views/macro_view.py, services/macro_service.py 연동용)
+    한국투자증권(KIS) API를 사용하여 코스피 지수를 조회
+    (튜플 반환으로 macro_service의 unpacking 에러 완전 차단)
     """
-    # KIS 국내 주식 업종 현재가 TR_ID: FHPUP02100000
-    # 업종코드(ISCD): "0001" (KOSPI)
     params = {
-        "FID_COND_MRKT_DIV_CODE": "U",  # 업종
-        "FID_INPUT_ISCD": "0001"        # 코스피 종합지수
+        "FID_COND_MRKT_DIV_CODE": "U",  
+        "FID_INPUT_ISCD": "0001"        
     }
     
     res = call_kis_api(tr_id="FHPUP02100000", endpoint="/uapi/domestic-stock/v1/quotations/inquire-index-price", params=params)
@@ -116,15 +111,12 @@ def fetch_kis_kospi_index() -> dict:
         output = res.get("output", {})
         if output:
             try:
-                # 현재가(지수), 전일대비부호, 전일대비율
                 current_idx = float(output.get("bstp_nmix_prpr", "0"))
                 change_pct = float(output.get("bstp_nmix_prdy_ctrt", "0"))
-                return {
-                    "price": current_idx,
-                    "change_pct": change_pct
-                }
+                sign = "+" if change_pct > 0 else ""
+                formatted = f"{current_idx:,.2f} ({sign}{change_pct:.2f}%)"
+                return formatted, current_idx
             except Exception as e:
                 logger.warning(f"KIS 지수 파싱 오류: {e}")
                 
-    # 실패 또는 미응답 시 빈 딕셔너리 반환
-    return {}
+    return "", 0.0
