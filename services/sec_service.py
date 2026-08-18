@@ -1,147 +1,265 @@
-# views/consensus_view.py
-import streamlit as st
+# services/sec_service.py
+import requests
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from services.sec_service import load_all_institutions_data, calculate_consensus
-from services.ai_service import call_selected_ai_engine
-from services.prompts import SEC_13F_CONSENSUS_PROMPT
+from bs4 import BeautifulSoup
+import re
+import xml.etree.ElementTree as ET
+import streamlit as st
+import time
+from config import INSTITUTIONS
 
-def render_consensus_view():
-    st.title("🤝 기관 13F Money 교집합 분석")
-    st.caption("SEC Form 13F 공시 데이터를 기반으로 글로벌 대형 기관들의 공통 포지셔닝(Consensus)을 분석합니다.")
-    st.divider()
+@st.cache_data(ttl=86400)
+def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
+    """
+    최대 max_quarters 분기만큼의 13F 공시를 역순으로 수집하여
+    [(df, meta_info), (df_prev, meta_info_prev), ...] 형태로 반환
+    """
+    base_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=13F-HR&dateb=&owner=exclude&count=20"
+    headers = {
+        "User-Agent": "MacroDashboard/1.0 (test@example.com) Mozilla/5.0"
+    }
 
-    with st.spinner("SEC 13F 기관 공시 데이터를 로드하는 중..."):
-        inst_data = load_all_institutions_data()
+    try:
+        res = requests.get(base_url, headers=headers, timeout=10)
+        res.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        return None, f"SEC EDGAR 연결 실패: {str(e)}"
 
+    soup = BeautifulSoup(res.text, "html.parser")
+    tables = soup.find_all("table", class_="tableFile2")
+    if not tables:
+        return None, f"해당 CIK({cik})의 13F-HR 검색 결과 테이블을 찾을 수 없습니다."
+
+    rows = tables[0].find_all("tr")[1:]
+    history_links = []
+    
+    for row in rows:
+        cols = row.find_all("td")
+        if len(cols) >= 4:
+            doc_type = cols[0].text.strip()
+            if doc_type == "13F-HR":
+                a_tag = cols[1].find("a", href=True)
+                filing_date = cols[3].text.strip()
+                if a_tag:
+                    doc_link = "https://www.sec.gov" + a_tag['href']
+                    history_links.append((filing_date, doc_link))
+        
+        if len(history_links) >= max_quarters:
+            break
+
+    if not history_links:
+        return None, "13F-HR 공시 문서를 찾을 수 없습니다."
+
+    all_results = []
+    for filing_date, doc_url in history_links:
+        try:
+            doc_res = requests.get(doc_url, headers=headers, timeout=10)
+            doc_res.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            continue
+
+        doc_soup = BeautifulSoup(doc_res.text, "html.parser")
+        xml_url = None
+        tables2 = doc_soup.find_all("table", class_="tableFile")
+        
+        if tables2:
+            for r in tables2[0].find_all("tr")[1:]:
+                c = r.find_all("td")
+                if len(c) >= 3:
+                    fname = c[2].find("a", href=True)
+                    if fname and fname.text.strip().endswith(".xml"):
+                        doc_text = c[1].text.strip().lower()
+                        if "information table" in doc_text or "infotable" in doc_text:
+                            xml_url = "https://www.sec.gov" + fname['href']
+                            break
+                        if not xml_url:
+                            xml_url = "https://www.sec.gov" + fname['href']
+
+        if not xml_url:
+            continue
+
+        try:
+            xml_res = requests.get(xml_url, headers=headers, timeout=15)
+            xml_res.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            continue
+
+        root = ET.fromstring(xml_res.content)
+        ns = {'n': root.tag.split('}')[0].strip('{')} if '}' in root.tag else {'n': ''}
+
+        data = []
+        for info in root.findall('n:infoTable', ns):
+            name = info.find('n:nameOfIssuer', ns).text if info.find('n:nameOfIssuer', ns) is not None else ''
+            title_class = info.find('n:titleOfClass', ns).text if info.find('n:titleOfClass', ns) is not None else ''
+            cusip = info.find('n:cusip', ns).text if info.find('n:cusip', ns) is not None else ''
+            val_text = info.find('n:value', ns).text if info.find('n:value', ns) is not None else '0'
+            
+            shrs_info = info.find('n:shrsOrPrnAmt', ns)
+            shares = 0
+            if shrs_info is not None:
+                shamt = shrs_info.find('n:sshPrnamt', ns)
+                if shamt is not None:
+                    shares = float(shamt.text)
+            
+            # SEC 13F Value는 천 달러 단위 (x 1,000 처리)
+            try:
+                val = float(val_text) * 1000 
+            except ValueError:
+                val = 0.0
+
+            data.append({
+                'name': name,
+                'class': title_class,
+                'cusip': cusip,
+                'value': val,
+                'shares': shares
+            })
+
+        if not data:
+            continue
+
+        df = pd.DataFrame(data)
+        # 종목명(CUSIP 기준)으로 그룹화하여 옵션/본주 분산 표기 합산
+        df = df.groupby(['name', 'cusip', 'class'], as_index=False).agg({'value':'sum', 'shares':'sum'})
+        df = df.sort_values(by='value', ascending=False).reset_index(drop=True)
+        
+        total_aum = df['value'].sum()
+        df['weight'] = (df['value'] / total_aum) * 100
+
+        # 대략적인 Report Date 추정 (Filing date에서 가장 가까운 직전 분기말)
+        fd_dt = pd.to_datetime(filing_date)
+        year = fd_dt.year
+        month = fd_dt.month
+        
+        if month in [1, 2, 3]: report_date = f"{year-1}-12-31"
+        elif month in [4, 5, 6]: report_date = f"{year}-03-31"
+        elif month in [7, 8, 9]: report_date = f"{year}-06-30"
+        else: report_date = f"{year}-09-30"
+
+        meta_info = {
+            "filing_date": filing_date,
+            "report_date": report_date
+        }
+        
+        all_results.append((df, meta_info))
+        time.sleep(0.1) # SEC API 호출 제한 방지
+
+    if not all_results:
+        return None, "성공적으로 추출된 분기 데이터가 없습니다."
+
+    return all_results, None
+
+def classify_qoq_action(row):
+    """직전 분기 대비 비중 증감폭을 기준으로 매수/매도/유지 액션 분류"""
+    diff = row['weight_diff']
+    shares_curr = row['shares_curr']
+    shares_prev = row['shares_prev']
+    
+    if shares_prev == 0 and shares_curr > 0:
+        return "🆕 신규 매수 (New)"
+    elif shares_curr == 0 and shares_prev > 0:
+        return "❌ 전량 매도 (Closed)"
+    elif diff > 0.05:
+        return "📈 비중 확대 (Added)"
+    elif diff < -0.05:
+        return "📉 비중 축소 (Reduced)"
+    else:
+        return "⚪ 유지 (Unchanged)"
+
+def format_currency(val):
+    if val >= 1e9:
+        return f"${val/1e9:,.2f}B"
+    elif val >= 1e6:
+        return f"${val/1e6:,.2f}M"
+    else:
+        return f"${val:,.0f}"
+
+# ==========================================
+# 🆕 Consensus (교집합) 분석용 헬퍼 함수
+# ==========================================
+
+@st.cache_data(ttl=86400)
+def load_all_institutions_data():
+    """등록된 모든 기관의 가장 최신 분기 13F 데이터를 일괄 수집하여 딕셔너리로 반환"""
+    data = {}
+    for inst_name, info in INSTITUTIONS.items():
+        hist, err = fetch_sec_13f_multi_quarters(info['cik'], max_quarters=1)
+        if hist and not err:
+            df, meta = hist[0]
+            data[inst_name] = {
+                'df': df,
+                'meta': meta
+            }
+        time.sleep(0.2) # SEC API 밴 방지 (Rate Limit)
+    return data
+
+def calculate_consensus(inst_data):
+    """
+    모든 기관 데이터를 취합하여 공통 보유 종목(교집합)을 계산하는 함수.
+    반환: DataFrame (보유 기관 수, 평균 비중, 보유 기관 리스트 등 포함)
+    """
     if not inst_data:
-        st.error("13F 데이터를 불러올 수 없습니다. 네트워크 연결 또는 데이터 소스를 확인해 주세요.")
-        return
+        return pd.DataFrame()
 
-    consensus_df = calculate_consensus(inst_data)
-
-    if consensus_df.empty:
-        st.info("현재 공통으로 보유한 종목 데이터가 없습니다.")
-        return
-
-    # ==========================================
-    # 🤖 [신규] SEC 13F 기관 Money 교집합 기반 투자 테마 요약 (AI)
-    # ==========================================
-    st.subheader("💡 SEC 13F 기관 Money 교집합 기반 투자 테마 요약 (13F Consensus Summary)")
-    st.markdown(
-        "대형 기관 및 슈퍼 인베스터들이 최근 공통으로 보유·확대한 종목군을 바탕으로, "
-        "**글로벌 스마트머니의 핵심 투자 내러티브와 공통 철학**을 AI가 구조화하여 분석합니다."
-    )
-
-    col_ai_sel, col_ai_btn = st.columns([2, 1])
-    with col_ai_sel:
-        ai_engine = st.selectbox(
-            "분석에 사용할 AI 엔진을 선택하세요",
-            [
-                "🛡️ 자동 탐색 (4단 Failover 무중단)",
-                "🥇 1순위: NVIDIA Nemotron-3 Super (120B)",
-                "🥈 2순위: Cloudflare AI (DeepSeek-R1-32B)",
-                "🥉 3순위: NVIDIA GPT-OSS-20B",
-                "🏅 4순위: Cerebras Cloud (GPT-OSS-120B)"
-            ],
-            key="consensus_ai_engine_select"
-        )
-    with col_ai_btn:
-        st.write("")
-        run_13f_ai = st.button("🚀 13F 스마트머니 테마 분석 실행", type="primary", use_container_width=True)
-
-    if run_13f_ai:
-        # 상위 교집합 종목 20개 추출하여 AI에게 전달
-        top_consensus = consensus_df.head(20)
-        summary_lines = []
-        for _, row in top_consensus.iterrows():
-            holders_str = ", ".join(row.get("Holders", [])) if isinstance(row.get("Holders"), list) else str(row.get("Holders", ""))
-            summary_lines.append(
-                f"- 종목명: {row.get('Name', 'N/A')} ({row.get('Ticker', 'N/A')}) | "
-                f"보유 기관 수: {row.get('Institution_Count', 0)}개 기관 | "
-                f"평균 비중: {row.get('Avg_Weight', 0):.2f}% | "
-                f"주요 보유 기관: {holders_str}"
-            )
+    all_holdings = []
+    
+    # 1. 모든 기관의 종목 데이터를 하나의 리스트로 취합
+    for inst_name, data in inst_data.items():
+        df = data['df'].copy()
+        df['Institution'] = inst_name
         
-        context_data = "\n".join(summary_lines)
-        user_prompt = (
-            f"[최신 SEC 13F 대형 기관 공통 보유 상위 종목 현황]:\n"
-            f"{context_data}\n\n"
-            f"위 13F 공통 매수 데이터를 심층 분석하여 글로벌 기관들의 핵심 투자 내러티브와 공통 철학을 구조화된 형식으로 작성해줘."
-        )
-
-        with st.spinner(f"'{ai_engine}' 엔진으로 13F 스마트머니 내러티브를 분석 중..."):
-            res = call_selected_ai_engine(ai_engine, user_prompt, SEC_13F_CONSENSUS_PROMPT)
-
-        if res["status"]:
-            st.success(f"✅ 분석 완료 (엔진: {res['provider']} | 지연시간: {res['latency_ms']} ms)")
-            if "translation_info" in res:
-                st.caption(f"**번역 상태:** {res['translation_info']}")
-            st.markdown(f"<div style='padding:1rem; border-radius:0.5rem; background-color:rgba(0,100,255,0.1);'>{res['response']}</div>", unsafe_allow_html=True)
-        else:
-            st.error("🔴 분석 생성 실패")
-            st.caption(res["response"])
-
-    st.divider()
-
-    # ==========================================
-    # 1. 시각화: 상위 교집합 종목 버블 차트 (기존 원본 복원)
-    # ==========================================
-    st.subheader("💡 주요 기관 공통 보유 종목 시각화 (Top 20)")
-    st.caption("원의 크기는 '보유 기관 수', 색상은 '평균 포트폴리오 비중'을 나타냅니다.")
-    
-    top_bubble_df = consensus_df.head(20).copy()
-    
-    # Plotly 버블 차트 생성
-    fig = px.scatter(
-        top_bubble_df,
-        x="Institution_Count",
-        y="Avg_Weight",
-        size="Institution_Count",
-        color="Avg_Weight",
-        hover_name="Name",
-        hover_data={
-            "Ticker": True,
-            "Institution_Count": True,
-            "Avg_Weight": ":.2f%",
-            "Holders": False
-        },
-        text="Ticker",
-        color_continuous_scale="Viridis",
-        size_max=40
-    )
-
-    fig.update_traces(
-        textposition='top center',
-        marker=dict(line=dict(width=1, color='DarkSlateGrey')),
-        hovertemplate="<b>%{hovertext}</b> (%{customdata[0]})<br>" +
-                      "보유 기관 수: %{x}개<br>" +
-                      "평균 비중: %{y:.2f}%<extra></extra>"
-    )
-
-    fig.update_layout(
-        height=500,
-        xaxis_title="보유 기관 수 (Institution Count)",
-        yaxis_title="기관 평균 포트폴리오 비중 (%)",
-        xaxis=dict(tickmode='linear', tick0=1, dtick=1),
-        margin=dict(l=20, r=20, t=40, b=20),
-        coloraxis_colorbar=dict(title="평균 비중(%)")
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-    st.divider()
-
-    # ==========================================
-    # 2. 13F Consensus 메인 데이터 테이블 (기존 원본 복원)
-    # ==========================================
-    st.subheader("📊 기관 공통 보유 종목 상세 (Consensus Top Holdings)")
-    
-    display_df = consensus_df.copy()
-    if "Holders" in display_df.columns:
-        display_df["Holders"] = display_df["Holders"].apply(lambda x: ", ".join(x) if isinstance(x, list) else x)
+        # 종목명 전처리 (불필요한 공백, INC, CORP 등 제거하여 매칭 확률 높임)
+        df['Name_Clean'] = df['name'].str.upper().str.replace(r'\b(INC|CORP|LLC|LTD|PLC|COMPANY|CO)\b', '', regex=True)
+        df['Name_Clean'] = df['Name_Clean'].str.replace(r'[^\w\s]', '', regex=True).str.strip()
         
-    display_df.columns = ["종목명 (Issuer)", "티커", "보유 기관 수", "평균 비중 (%)", "주요 보유 기관"]
-    display_df["평균 비중 (%)"] = display_df["평균 비중 (%)"].map("{:.2f}%".format)
+        # 각 기관별 상위 100개 종목만 추출 (꼬리 종목 노이즈 제거)
+        df = df.head(100)
+        
+        for _, row in df.iterrows():
+            all_holdings.append({
+                'Name': row['name'],
+                'Name_Clean': row['Name_Clean'],
+                'Ticker': row['cusip'][:6], # 임시로 CUSIP 앞자리를 티커 대용으로 사용
+                'Weight': row['weight'],
+                'Institution': row['Institution']
+            })
+
+    # 2. 취합된 데이터를 데이터프레임으로 변환
+    holdings_df = pd.DataFrame(all_holdings)
     
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    if holdings_df.empty:
+        return pd.DataFrame()
+
+    # 3. 'Name_Clean' 기준으로 그룹화하여 교집합 계산
+    consensus = holdings_df.groupby('Name_Clean').agg(
+        Name=('Name', 'first'),          # 원래 이름 1개 가져오기
+        Ticker=('Ticker', 'first'),
+        Institution_Count=('Institution', 'nunique'), # 보유 기관 수
+        Avg_Weight=('Weight', 'mean'),   # 평균 비중
+        Holders=('Institution', list)    # 어떤 기관들이 보유했는지 리스트화
+    ).reset_index()
+
+    # 4. 2개 기관 이상 보유한 종목만 필터링 후 기관 수 -> 비중 순으로 정렬
+    consensus = consensus[consensus['Institution_Count'] >= 2]
+    consensus = consensus.sort_values(by=['Institution_Count', 'Avg_Weight'], ascending=[False, False]).reset_index(drop=True)
+    
+    # 불필요한 컬럼 정리
+    consensus = consensus.drop(columns=['Name_Clean'])
+
+    return consensus
+
+def get_top_holdings_by_inst(inst_data, inst_name, top_n=20):
+    """특정 기관의 상위 N개 보유 종목 데이터를 보기 좋게 포맷팅하여 반환"""
+    if inst_name not in inst_data:
+        return pd.DataFrame()
+    
+    df = inst_data[inst_name]['df'].head(top_n).copy()
+    
+    # 출력용 컬럼 정리
+    df_display = df[['name', 'cusip', 'weight', 'value', 'shares']].copy()
+    df_display.columns = ['종목명 (Issuer)', 'CUSIP', '비중 (%)', '평가액 ($)', '보유 주식수']
+    df_display['비중 (%)'] = df_display['비중 (%)'].map('{:.2f}%'.format)
+    df_display['평가액 ($)'] = df_display['평가액 ($)'].map('${:,.0f}'.format)
+    df_display['보유 주식수'] = df_display['보유 주식수'].map('{:,.0f}'.format)
+    
+    return df_display
