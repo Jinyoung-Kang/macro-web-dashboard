@@ -301,3 +301,15 @@ def call_selected_ai_engine(engine_name: str, prompt: str, system_prompt: str = 
         return test_cerebras(sec_ce_key, prompt, system_prompt)
     else:
         return generate_ai_briefing_with_failover(prompt, system_prompt)
+
+# ==========================================
+# 🎯 투자 에이전트 전용 통합 호출 함수 (신규 추가)
+# ==========================================
+def ask_investment_agent(prompt: str) -> str:
+    """
+    투자 분석 전문 에이전트 프롬프트를 적용하여 텍스트 분석 결과를 반환하는 통합 함수
+    """
+    res = generate_ai_briefing_with_failover(prompt=prompt, system_prompt=INVESTMENT_AGENT_PROMPT)
+    if isinstance(res, dict):
+        return res.get("response", "AI 응답을 생성하지 못했습니다.")
+    return str(res)
