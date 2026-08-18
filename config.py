@@ -8,14 +8,18 @@ import streamlit as st
 def get_secret(key: str, default: str = "") -> str:
     """Streamlit secrets 또는 환경변수에서 설정값 안전 로드"""
     if hasattr(st, "secrets") and key in st.secrets:
-        return st.secrets[key]
+        return str(st.secrets[key])
     return os.environ.get(key, default)
 
 # 앱 보안 비밀번호
 APP_PASSWORD = get_secret("APP_PASSWORD", "1234")
 
-# KRX Open API 설정
-KRX_AUTH_KEY = get_secret("KRX_AUTH_KEY", "")
+# KRX Open API 설정 ([krx] api_key 또는 KRX_AUTH_KEY 모두 호환)
+if hasattr(st, "secrets") and "krx" in st.secrets and isinstance(st.secrets["krx"], dict):
+    KRX_AUTH_KEY = st.secrets["krx"].get("api_key", st.secrets["krx"].get("auth_key", ""))
+else:
+    KRX_AUTH_KEY = get_secret("KRX_AUTH_KEY", "")
+
 KRX_BASE_URL = "http://data-dbg.krx.co.kr/svc/apis"
 
 # ==============================================================================
@@ -210,12 +214,10 @@ LIVE_CLOCK_HTML = """
     </div>
 
     <script>
-        // 외부 API로 동적 로딩할 공휴일 Set
         let holidaysKR = new Set();
         let holidaysUS = new Set();
         let loadedYear = null;
 
-        // 외부 공공 API(Nager.Date)로부터 국가별 연간 공휴일 비동기 Fetch
         async function fetchHolidays(year) {
             if (loadedYear === year) return;
             try {
@@ -227,7 +229,6 @@ LIVE_CLOCK_HTML = """
                 if (resKR.ok) {
                     const dataKR = await resKR.json();
                     holidaysKR = new Set(dataKR.map(h => h.date));
-                    // 5월 1일 근로자의 날 및 12월 31일 KRX 연말 휴장일 추가
                     holidaysKR.add(`${year}-05-01`);
                     holidaysKR.add(`${year}-12-31`);
                 }
@@ -235,7 +236,6 @@ LIVE_CLOCK_HTML = """
                 if (resUS.ok) {
                     const dataUS = await resUS.json();
                     holidaysUS = new Set(dataUS.map(h => h.date));
-                    // 성금요일(Good Friday) 계산 및 반영 (부활절 이틀 전)
                     const goodFriday = calculateGoodFriday(year);
                     if (goodFriday) holidaysUS.add(goodFriday);
                 }
@@ -246,7 +246,6 @@ LIVE_CLOCK_HTML = """
             }
         }
 
-        // 성금요일(Good Friday) 연산 알고리즘 (서수 역법)
         function calculateGoodFriday(year) {
             const a = year % 19;
             const b = Math.floor(year / 100);
@@ -282,12 +281,10 @@ LIVE_CLOCK_HTML = """
             const minute = tzDate.getMinutes();
             const timeNum = hour * 100 + minute;
 
-            // 주말 휴장
             if (day === 0 || day === 6) {
                 return { text: "휴장 (주말)", className: "status-closed" };
             }
 
-            // KOSPI 판별
             if (type === 'KOSPI') {
                 if (holidaysKR.has(yyyymmdd)) {
                     return { text: "휴장 (공휴일)", className: "status-closed" };
@@ -296,9 +293,7 @@ LIVE_CLOCK_HTML = """
                 if (timeNum >= 830 && timeNum < 900)  return { text: "프리마켓", className: "status-pre" };
                 if (timeNum >= 1530 && timeNum <= 1800) return { text: "애프터마켓", className: "status-post" };
                 return { text: "장 마감", className: "status-closed" };
-            } 
-            // NASDAQ 판별
-            else {
+            } else {
                 if (holidaysUS.has(yyyymmdd)) {
                     return { text: "휴장 (공휴일)", className: "status-closed" };
                 }
@@ -313,7 +308,6 @@ LIVE_CLOCK_HTML = """
             const now = new Date();
             const currentYear = now.getFullYear();
             
-            // 연도가 바뀌거나 최초 로드 시 API 호출
             if (loadedYear !== currentYear) {
                 fetchHolidays(currentYear);
             }
