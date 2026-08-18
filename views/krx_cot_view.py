@@ -187,11 +187,11 @@ def render_krx_cot_view():
     # 차트 판독 팁
     with st.expander("🔍 **파생상품 차트 실전 판독 가이드 (Basis & Open Interest)**", expanded=False):
         st.markdown("""
-        * **선물 가격 상승 + 미결제약정 증가 (신규 롱)**: 상승에 베팅하는 신규 자금이 시장에 강력하게 유입되는 추세적 상승 국면입니다.
-        * **선물 가격 상승 + 미결제약정 감소 (숏 커버링)**: 하락에 베팅했던 세력이 손절/환매수하면서 발생하는 기술적 반등으로, 추가 매수세가 없으면 하락 반전할 위험이 있습니다.
+        * **선물 가격 상승 + 미결제약정 증가 (신규 롱)**: 상승에 베팅하는 신규 자금이 시장에 유입되는 추세적 상승 국면입니다.
+        * **선물 가격 상승 + 미결제약정 감소 (숏 커버링)**: 하락에 베팅했던 세력이 손절/환매수하면서 발생하는 기술적 반등입니다.
         * **선물 가격 하락 + 미결제약정 증가 (신규 숏)**: 하락에 베팅하는 신규 매도 포지션이 누적되는 추세적 하락 압력 국면입니다.
-        * **선물 가격 하락 + 미결제약정 감소 (롱 청산)**: 기존 매수 세력이 손절/차익실현하고 이탈하는 국면으로, 바닥 다지기 이후 반등이 나타날 수 있습니다.
-        * **베이시스(Basis)와 프로그램 차익거래**: 콘탱고(선물 > 현물)가 커지면 기관의 '선물 매도 + 현물 매수' 차익거래로 코스피 대형주 매수세가 유입되며, 백워데이션(선물 < 현물) 시에는 현물 매도 폭탄이 출회될 수 있습니다.
+        * **선물 가격 하락 + 미결제약정 감소 (롱 청산)**: 기존 매수 세력이 손절/차익실현하고 이탈하는 국면으로, 바닥 다지기 후 반등이 나타날 수 있습니다.
+        * **베이시스(Basis)와 프로그램 차익거래**: 콘탱고(선물 > 현물) 확대 시 기관 차익 매수 유입, 백워데이션(선물 < 현물) 시 현물 매도 출회 가능성이 높아집니다.
         """)
 
     # ==========================================================================
@@ -263,34 +263,31 @@ def render_krx_cot_view():
         )
 
     # ==========================================================================
-    # 4. AI 파생 수급 & 스마트머니 종합 진단 (마크다운 완벽 렌더링)
+    # 4. AI 파생 수급 & 스마트머니 종합 진단 (마크다운 표 완벽 표출)
     # ==========================================================================
     st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
     st.markdown("#### 🤖 AI 파생 수급 & 스마트머니 종합 진단")
 
     if st.button("🧠 현재 파생 수급 기반 투자 가설 & 심층 결론 리포트 생성", use_container_width=True):
-        with st.spinner("한국 파생시장(KOSPI 200 선물, 베이시스, OI 국면) 데이터를 분석하여 정밀 AI 리포트를 생성하고 있습니다..."):
+        with st.spinner("파생 데이터 분석 및 다단계 AI 엔진(DeepSeek + 번역) 파이프라인을 실행하고 있습니다..."):
             prompt = f"""
-            [국내 파생시장 확정 데이터 및 한국판 COT 수급 현황]
-            - 데이터 기준일: {data_date_str} (분석 시각: {now_str})
-            - 대상: {latest['Contract_Name']}
-            - 선물 종가: {latest['Futures_Close']} pt (전일대비 {latest['Change_Pct']:+.2f}%)
-            - 시장 베이시스: {latest['Market_Basis']:+.2f} pt ({basis_state})
-            - 미결제약정(OI): {int(latest['Open_Interest']):,} 계약 (일일 변동: {int(latest['OI_Change']):+,} 계약)
-            - 현재 시장 국면: {latest['Market_Phase']}
-            - 한국판 COT OI Index: {latest['COT_OI_Index']:.1f}% (0%=극단적 과매도/침체, 100%=극단적 과열/고점 경계)
-            - 투자 주체별 누적 수급(20일): 외국인 +38,500계약(롱), 금융투자 -24,100계약(헤지), 개인 -7,600계약
+            [KOSPI 200 Derivatives Market Data]
+            - Date: {data_date_str} (Analysis Time: {now_str})
+            - Target: {latest['Contract_Name']}
+            - Futures Close: {latest['Futures_Close']} pt ({latest['Change_Pct']:+.2f}%)
+            - Market Basis: {latest['Market_Basis']:+.2f} pt ({basis_state})
+            - Open Interest (OI): {int(latest['Open_Interest']):,} contracts (Daily Change: {int(latest['OI_Change']):+,} contracts)
+            - Market Phase: {latest['Market_Phase']}
+            - COT OI Index: {latest['COT_OI_Index']:.1f}% (0%=Extreme Oversold, 100%=Extreme Overbought)
+            - 20-Day Cumulative Net Position: Foreigners +38,500 contracts (Long), Financial Investment (Arbitrage Hedge) -24,100 contracts (Short), Retail -7,600 contracts (Short).
 
-            위 데이터를 기반으로 시스템 프롬프트(KRX_DERIVATIVES_PROMPT)의 4단계 규격에 맞추어 냉정하고 명확한 한글 심층 분석을 작성하라.
+            Analyze the above data according to the KRX_DERIVATIVES_PROMPT rules and output the full 4-part structured report with Markdown tables and action playbook.
             """
             ai_res = ask_krx_cot_agent(prompt)
             
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
             with st.container(border=True):
-                # 헤더 정보 (엔진 단계 표시)
                 step_info = ai_res.get("pipeline_step", "AI 응답 완료")
-                st.caption(f"⚡ **생성 엔진 파이프라인**: `{step_info}`")
+                st.caption(f"⚡ **실행 엔진 파이프라인**: `{step_info}`")
                 st.divider()
-                
-                # 마크다운 본문 렌더링
                 st.markdown(ai_res.get("response", ""))
