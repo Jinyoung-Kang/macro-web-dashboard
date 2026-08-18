@@ -80,13 +80,13 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
         vix_hist, move_hist, hy_df, cp_spread_df, stlfsi_df, now_str_kst
     )
 
-    header_left, header_right = st.columns([2.8, 1.2])
+    header_left, header_right = st.columns([2.7, 1.3])
     with header_left:
         st.title("📊 Global Macro Dashboard")
         st.caption(f"최근 데이터 갱신 시각: {now_str_kst} (KST) | 갱신 주기: {refresh_interval}초")
 
     # ==============================================================================
-    # 우측 상단 나란히 2개의 버튼 배치 (요구사항 반영)
+    # 우측 상단 나란히 2개의 버튼 배치 (버튼 1 아래에 버튼 2 위치)
     # ==============================================================================
     with header_right:
         st.write("")
@@ -98,7 +98,7 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
             
         st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
             
-        # 2. 신규 AI 통합 브리핑 버튼 (1번 버튼 바로 밑에 위치)
+        # 2. 신규 AI 통합 브리핑 버튼 (버튼 1 바로 밑에 생성)
         with st.popover("🤖 AI로 텍스트 브리핑 보기 / 복사", use_container_width=True):
             st.markdown("**🤖 AI 기반 통합 데이터 브리핑**")
             st.caption(f"대시보드 전역의 최신 데이터를 취합하여 즉시 분석합니다.\n(기준 시각: {now_str_kst})")
