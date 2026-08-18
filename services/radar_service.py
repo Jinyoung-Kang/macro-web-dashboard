@@ -1,6 +1,7 @@
 """
 services/radar_service.py
 KRX 정보데이터시스템(pykrx) 및 금융 REST API를 활용한 날짜별/누적 수급 스캐닝 엔진
+자동 과거 영업일 탐색(Smart Fallback) 로직 탑재
 """
 import logging
 from datetime import datetime, timedelta
@@ -10,7 +11,6 @@ import requests
 import streamlit as st
 import yfinance as yf
 
-# 가장 안정적인 한국거래소 크롤링 라이브러리 pykrx 로드
 try:
     from pykrx import stock
     PYKRX_AVAILABLE = True
@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 # 1. PyKrx 엔진 (가장 확실한 과거/장마감 확정 원장 조회)
 # ==============================================================================
-@st.cache_data(ttl=600, show_spinner=False)
 def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     if not PYKRX_AVAILABLE:
         return pd.DataFrame()
@@ -32,14 +31,12 @@ def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade
     inv = inv_map.get(investor, "외국인")
     
     try:
-        # 특정 날짜의 투자자별 순매수 데이터 조회
         df = stock.get_market_net_purchases_of_equities_by_ticker(target_date, target_date, mkt, inv)
         if df.empty:
             return pd.DataFrame()
             
         df = df.reset_index().rename(columns={"티커": "종목코드"})
         
-        # 순매수 / 순매도 필터링 및 정렬
         if trade_type == "순매수":
             df = df[df["순매수거래대금"] > 0].sort_values("순매수거래대금", ascending=False).head(top_n)
         else:
@@ -48,7 +45,6 @@ def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade
         if df.empty:
             return pd.DataFrame()
 
-        # 해당 날짜의 종가 및 등락률 조회를 위해 OHLCV 데이터 병합
         prices_df = stock.get_market_ohlcv(target_date, target_date, mkt)
         
         records = []
@@ -57,7 +53,7 @@ def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade
             code = row["종목코드"]
             name = row["종목명"]
             net_amt = row["순매수거래대금"]
-            amt_eok = round(net_amt / 100000000.0, 1) # 억 원 단위
+            amt_eok = round(net_amt / 100000000.0, 1)
             
             price = 0
             fluc = 0.0
@@ -74,19 +70,18 @@ def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade
                 "등락률(%)": fluc,
                 "순매수대금(억)": amt_eok,
                 "시가총액_가중": max(price * 1000, 500),
-                "데이터_출처": f"PyKrx 공식 데이터 ({target_date})"
+                "데이터_출처": f"PyKrx 공식 확정 ({target_date})"
             })
             rank += 1
         return pd.DataFrame(records)
     except Exception as e:
-        logger.warning(f"PyKrx 데이터 조회 실패: {e}")
+        logger.warning(f"PyKrx 조회 실패 ({target_date}): {e}")
         return pd.DataFrame()
 
 
 # ==============================================================================
 # 2. Daum 금융 API (당일 실시간 조회용 백업)
 # ==============================================================================
-@st.cache_data(ttl=60, show_spinner=False)
 def fetch_daum_deal_ranking(market: str = "KOSPI", investor: str = "외국인", trade_type: str = "순매수", top_n: int = 30) -> pd.DataFrame:
     market_param = "KOSPI" if "KOSPI" in market.upper() or "코스피" in market else "KOSDAQ"
     inv_map = {"외국인": "FOREIGN", "기관": "INSTITUTION", "연기금": "PENSION", "금융투자": "FINANCIAL", "투신": "TRUST", "개인": "INDIVIDUAL"}
@@ -97,8 +92,7 @@ def fetch_daum_deal_ranking(market: str = "KOSPI", investor: str = "외국인", 
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer": "https://finance.daum.net/trend/investors",
-        "Accept": "application/json, text/plain, */*"
+        "Referer": "https://finance.daum.net/trend/investors"
     }
 
     try:
@@ -112,7 +106,6 @@ def fetch_daum_deal_ranking(market: str = "KOSPI", investor: str = "외국인", 
                     name = row.get("name", "")
                     price = float(row.get("tradePrice", 0))
                     
-                    # 등락률 정밀 파싱
                     change_pct = float(row.get("changeRate", 0)) * 100.0
                     if str(row.get("change", "")) == "FALL":
                         change_pct = -abs(change_pct)
@@ -125,7 +118,7 @@ def fetch_daum_deal_ranking(market: str = "KOSPI", investor: str = "외국인", 
                     records.append({
                         "순위": idx, "종목코드": code, "종목명": name, "현재가": price,
                         "등락률(%)": round(change_pct, 2), "순매수대금(억)": amt_eok,
-                        "시가총액_가중": max(price * 1000, 500), "데이터_출처": "Daum 실시간 API"
+                        "시가총액_가중": max(price * 1000, 500), "데이터_출처": "Daum 당일 실시간 API"
                     })
                 return pd.DataFrame(records)
     except Exception as e:
@@ -134,31 +127,43 @@ def fetch_daum_deal_ranking(market: str = "KOSPI", investor: str = "외국인", 
 
 
 # ==============================================
-# 3. 통합 수급 스캐너 (스마트 라우팅)
+# 3. 통합 수급 스캐너 (자동 과거 영업일 탐색 로직 적용)
 # ==============================================
 @st.cache_data(ttl=60, show_spinner=False)
 def get_market_radar_scanner(target_date_obj, market: str = "KOSPI", investor: str = "외국인", trade_type: str = "순매수", top_n: int = 30) -> pd.DataFrame:
-    date_str = target_date_obj.strftime("%Y%m%d")
+    """
+    지정한 날짜에 데이터가 없을 경우(장마감 집계 전, 휴일 등), 자동으로 과거로 거슬러 올라가
+    데이터가 존재하는 가장 최근의 확정 영업일 데이터를 반환합니다.
+    """
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
     today_str = now_kst.strftime("%Y%m%d")
-    
-    # 1. 오늘 날짜 + 실시간(09:00~16:00)인 경우 Daum API 우선 시도
     time_num = now_kst.hour * 100 + now_kst.minute
-    if date_str == today_str and 900 <= time_num < 1600:
-        df_daum = fetch_daum_deal_ranking(market, investor, trade_type, top_n)
-        if not df_daum.empty:
-            return df_daum
+    
+    current_date_obj = target_date_obj
+    max_lookback_days = 7  # 최대 7일 전까지 탐색 (명절 연휴 방어)
 
-    # 2. 가장 확실한 PyKrx 시도 (과거 날짜 및 장마감 이후 완벽 커버)
-    df_pykrx = fetch_pykrx_deal_ranking(date_str, market, investor, trade_type, top_n)
-    if not df_pykrx.empty:
-        return df_pykrx
+    for i in range(max_lookback_days):
+        date_str = current_date_obj.strftime("%Y%m%d")
+        
+        # 1. 오늘 날짜이고 장중(09:00~16:00)인 경우 Daum API 우선 시도
+        if date_str == today_str and 900 <= time_num < 1600:
+            df_daum = fetch_daum_deal_ranking(market, investor, trade_type, top_n)
+            if not df_daum.empty:
+                return df_daum
 
-    # 3. 만약 PyKrx가 아직 오늘 날짜를 집계하지 못했다면 Daum 재시도
-    if date_str == today_str:
-        df_daum = fetch_daum_deal_ranking(market, investor, trade_type, top_n)
-        if not df_daum.empty:
-            return df_daum
+        # 2. PyKrx(공식 원장)를 통해 해당 날짜 데이터 조회 시도
+        df_pykrx = fetch_pykrx_deal_ranking(date_str, market, investor, trade_type, top_n)
+        if not df_pykrx.empty:
+            return df_pykrx
+
+        # 3. 당일 데이터인데 PyKrx가 아직 업데이트 전이라면 Daum API를 통해 임시 확정치 수신
+        if date_str == today_str:
+            df_daum = fetch_daum_deal_ranking(market, investor, trade_type, top_n)
+            if not df_daum.empty:
+                return df_daum
+                
+        # 데이터가 없으면 하루 전으로 이동하여 재검색 (주말/집계지연 패스)
+        current_date_obj -= timedelta(days=1)
 
     return pd.DataFrame()
 
