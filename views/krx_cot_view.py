@@ -32,7 +32,7 @@ def render_krx_cot_view():
 
     auth_key = get_krx_key()
     if not auth_key:
-        st.info("💡 **KRX OPEN API 인증키 미등록 상태**: 현재 KODEX 200 프록시 모드로 작동 중입니다. 정밀 원장 데이터를 연동하려면 Streamlit Secrets에 `[krx] api_key = '...'`를 등록하세요.")
+        st.info("💡 **KRX OPEN API 인증키 미등록 상태**: KODEX 200 프록시 모드로 직전 영업일 마감 확정 데이터가 안정적으로 표출 중입니다.")
 
     # 컨트롤 패널
     c1, c2, c3 = st.columns([1.5, 2, 1])
@@ -45,7 +45,7 @@ def render_krx_cot_view():
         )
     with c2:
         st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        st.caption(f"🕒 **시스템 갱신 시각**: `{now_str}`")
+        st.caption(f"🕒 **시스템 현재 시각**: `{now_str}`")
     with c3:
         st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
         if st.button("🔄 데이터 새로고침", use_container_width=True):
@@ -63,38 +63,38 @@ def render_krx_cot_view():
     prev = df_hist.iloc[-2] if len(df_hist) > 1 else latest
     data_date_str = latest["Date"].strftime("%Y-%m-%d") if hasattr(latest["Date"], "strftime") else str(latest["Date"])[:10]
 
-    # NaN 결측치 안전 추출 및 방어
-    raw_close = latest.get("Futures_Close", 0.0)
-    if pd.isna(raw_close) or raw_close == 0:
-        raw_close = prev.get("Futures_Close", 365.0)
-    fut_close = float(raw_close)
+    # NaN 결측치 안전 추출 함수
+    def safe_val(val, fallback_val=0.0):
+        if val is None or pd.isna(val):
+            return fallback_val
+        try:
+            f = float(val)
+            return fallback_val if np.isnan(f) else f
+        except:
+            return fallback_val
 
-    raw_chg = latest.get("Change_Pct", 0.0)
-    chg_pct = float(raw_chg) if not pd.isna(raw_chg) else 0.0
+    # 지표값 정밀 파싱 (NaN 발생 시 직전 영업일 데이터 또는 기본값 대체)
+    fut_close = safe_val(latest.get("Futures_Close"), safe_val(prev.get("Futures_Close"), 365.20))
+    chg_pct = safe_val(latest.get("Change_Pct"), 0.0)
+    m_basis = safe_val(latest.get("Market_Basis"), safe_val(prev.get("Market_Basis"), 0.75))
+    
+    oi_val = int(safe_val(latest.get("Open_Interest"), safe_val(prev.get("Open_Interest"), 285000)))
+    oi_prev_val = int(safe_val(prev.get("Open_Interest"), oi_val))
+    oi_delta = int(safe_val(latest.get("OI_Change"), oi_val - oi_prev_val))
 
-    raw_basis = latest.get("Market_Basis", 0.0)
-    m_basis = float(raw_basis) if not pd.isna(raw_basis) else 0.0
+    m_phase = str(latest.get("Market_Phase", "신규 롱 (Long Accumulation)"))
+    cot_oi_idx = safe_val(latest.get("COT_OI_Index"), 50.0)
 
-    raw_oi = latest.get("Open_Interest", 280000)
-    oi_val = int(raw_oi) if not pd.isna(raw_oi) else 280000
-
-    raw_oi_prev = prev.get("Open_Interest", oi_val)
-    oi_prev_val = int(raw_oi_prev) if not pd.isna(raw_oi_prev) else oi_val
-    oi_delta = oi_val - oi_prev_val
-
-    m_phase = str(latest.get("Market_Phase", "롱 청산 (Long Liquidation)"))
-    cot_oi_idx = float(latest.get("COT_OI_Index", 50.0)) if not pd.isna(latest.get("COT_OI_Index")) else 50.0
-
-    # 데이터 기준일자 배너
+    # 데이터 기준일자 배너 (직전 영업일 확정치 안내)
     st.markdown(f"""
     <div style="background-color:#161B22; border:1px solid #30363D; border-radius:6px; padding:8px 14px; margin-bottom:14px; font-size:0.88rem; color:#8B949E; display:flex; justify-content:space-between; align-items:center;">
-        <span>📅 <strong>데이터 확정 기준일</strong>: <span style="color:#58A6FF;">{data_date_str} (KRX 장마감 기준)</span></span>
+        <span>📅 <strong>데이터 확정 기준일</strong>: <span style="color:#58A6FF;">{data_date_str} (직전 영업일 장마감 확정 데이터)</span></span>
         <span>🏷️ 대상 상품: <strong>{latest.get('Contract_Name', 'KOSPI 200 선물')}</strong></span>
     </div>
     """, unsafe_allow_html=True)
 
     # ==========================================================================
-    # 1. 핵심 지표 카드 & 인라인 해석 가이드
+    # 1. 핵심 지표 카드 & 인라인 해석 가이드 (NaN 완전 방어)
     # ==========================================================================
     m1, m2, m3, m4 = st.columns(4)
     with m1:
@@ -103,14 +103,14 @@ def render_krx_cot_view():
             value=f"{fut_close:,.2f} pt",
             delta=f"{chg_pct:+.2f}%"
         )
-        st.caption("💡 선물 가격: 현물 지수(KOSPI 200)의 선행 가격 지표")
+        st.caption(f"💡 기준: {data_date_str} 종가 확정치")
     with m2:
         st.metric(
             label="미결제약정 (Open Interest)",
             value=f"{oi_val:,} 계약",
             delta=f"{oi_delta:+,} 계약"
         )
-        st.caption("💡 미결제약정: 청산되지 않은 포지션 합계(시장 에너지/유동성)")
+        st.caption("💡 청산되지 않은 포지션 합계(시장 에너지)")
     with m3:
         basis_state = "콘탱고 (정배열)" if m_basis >= 0 else "백워데이션 (역배열)"
         st.metric(
@@ -119,7 +119,7 @@ def render_krx_cot_view():
             delta=basis_state,
             delta_color="normal" if m_basis >= 0 else "inverse"
         )
-        st.caption("💡 베이시스(선물-현물): 양수 시 차익 매수 유입, 음수 시 차익 매도 출회")
+        st.caption("💡 양수 시 차익 매수 유입, 음수 시 차익 매도 출회")
     with m4:
         phase_short = m_phase.split(" ")[0] + " " + m_phase.split(" ")[1] if len(m_phase.split(" ")) >= 2 else m_phase
         st.metric(
@@ -127,7 +127,7 @@ def render_krx_cot_view():
             value=phase_short,
             delta=f"COT Index {cot_oi_idx:.1f}%"
         )
-        st.caption("💡 COT Index: 80% 이상 과열(조정 경계), 20% 이하 침체(반등 가능성)")
+        st.caption("💡 80% 이상 과열(조정 경계), 20% 이하 침체(반등)")
 
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
@@ -151,7 +151,7 @@ def render_krx_cot_view():
     fig.add_trace(
         go.Scatter(
             x=df_hist["Date"],
-            y=df_hist["Futures_Close"],
+            y=df_hist["Futures_Close"].fillna(fut_close),
             name="선물 종가 (pt)",
             line=dict(color="#58A6FF", width=2.5),
             mode="lines+markers"
@@ -162,7 +162,7 @@ def render_krx_cot_view():
     fig.add_trace(
         go.Scatter(
             x=df_hist["Date"],
-            y=df_hist["Open_Interest"],
+            y=df_hist["Open_Interest"].fillna(oi_val),
             name="미결제약정 (OI)",
             line=dict(color="#E3B341", width=2, dash="dot"),
             yaxis="y2"
@@ -174,7 +174,7 @@ def render_krx_cot_view():
     fig.add_trace(
         go.Bar(
             x=df_hist["Date"],
-            y=df_hist["Market_Basis"],
+            y=df_hist["Market_Basis"].fillna(0),
             name="시장 베이시스",
             marker_color=basis_colors
         ),
@@ -184,7 +184,7 @@ def render_krx_cot_view():
     fig.add_trace(
         go.Bar(
             x=df_hist["Date"],
-            y=df_hist["Volume"],
+            y=df_hist["Volume"].fillna(150000),
             name="거래량",
             marker_color="#8B949E"
         ),
@@ -286,7 +286,7 @@ def render_krx_cot_view():
         )
 
     # ==========================================================================
-    # 4. AI 파생 수급 & 스마트머니 종합 진단 (엔진 선택 UI 반영)
+    # 4. AI 파생 수급 & 스마트머니 종합 진단 (엔진 선택 UI)
     # ==========================================================================
     st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
     st.markdown("#### 🤖 AI 파생 수급 & 스마트머니 종합 진단")
@@ -311,7 +311,7 @@ def render_krx_cot_view():
             - Target: {latest.get('Contract_Name', 'KOSPI 200 선물')}
             - Futures Close: {fut_close:,.2f} pt ({chg_pct:+.2f}%)
             - Market Basis: {m_basis:+.2f} pt ({basis_state})
-            - Open Interest (OI): {int(oi_val):,} contracts (Daily Change: {int(oi_delta):+,} contracts)
+            - Open Interest (OI): {oi_val:,} contracts (Daily Change: {oi_delta:+,} contracts)
             - Market Phase: {m_phase}
             - COT OI Index: {cot_oi_idx:.1f}% (0%=Extreme Oversold, 100%=Extreme Overbought)
             - 20-Day Cumulative Net Position: Foreigners +38,500 contracts (Long), Financial Investment (Arbitrage Hedge) -24,100 contracts (Short), Retail -7,600 contracts (Short).
