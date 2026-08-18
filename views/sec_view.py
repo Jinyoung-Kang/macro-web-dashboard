@@ -223,7 +223,6 @@ def render_sec_view():
 
         active_history = all_history_results[:selected_q_count]
         
-        # 분기별 데이터셋 결합
         appended_list = []
         for df_q, q_meta in active_history:
             temp_df = df_q.copy()
