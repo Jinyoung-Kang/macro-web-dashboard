@@ -13,10 +13,9 @@ import pandas as pd
 from services.radar_service import get_market_radar_scanner, get_stock_cumulative_flow
 
 def render_radar_view():
-    # KST 기준 시각 및 장 상태 정확 판정
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
     now_str = now_kst.strftime("%Y-%m-%d %H:%M:%S")
-    weekday = now_kst.weekday() # 0: 월 ~ 6: 일
+    weekday = now_kst.weekday()
     time_num = now_kst.hour * 100 + now_kst.minute
     
     if weekday in [5, 6]:
@@ -65,65 +64,67 @@ def render_radar_view():
             top_n = st.selectbox("표시 종목 수", options=[15, 30, 50], index=1)
 
         market_key = "KOSPI" if "KOSPI" in market_sel else "KOSDAQ"
+        
+        # 무중단 파이프라인에서 데이터 로드
         df_radar = get_market_radar_scanner(market=market_key, investor=investor_sel, trade_type=trade_sel, top_n=top_n)
 
-        if df_radar.empty:
-            st.warning("네트워크 오류로 수급 데이터를 가져오지 못했습니다. 잠시 후 새로고침 해주세요.")
-        else:
-            # 상단 메트릭 요약
-            top1 = df_radar.iloc[0]
-            total_top_amt = df_radar["순매수대금(억)"].sum()
-            
-            sc1, sc2, sc3 = st.columns(3)
-            with sc1:
-                st.metric(label=f"🥇 1위 집중 종목 ({investor_sel})", value=f"{top1['종목명']}", delta=f"{top1['순매수대금(억)']:+,.1f} 억")
-            with sc2:
-                st.metric(label=f"상위 {len(df_radar)}개사 합산 {trade_sel} 규모", value=f"{total_top_amt:+,.1f} 억원")
-            with sc3:
-                st.metric(label="⏱️ 데이터 기준 시각 (KST)", value=now_str)
+        # 데이터 출처 경고 처리
+        data_source = df_radar["데이터_출처"].iloc[0] if not df_radar.empty and "데이터_출처" in df_radar.columns else "알 수 없음"
+        if "모의" in data_source:
+            st.warning("⚠️ **현재 API 및 웹 서버 응답 지연 상태입니다.** 화면 레이아웃 보호를 위해 '가상의 모의 데이터'가 표출 중입니다. 잠시 후 다시 시도해주세요.")
 
-            st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        # 정상 렌더링
+        top1 = df_radar.iloc[0]
+        total_top_amt = df_radar["순매수대금(억)"].sum()
+        
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            st.metric(label=f"🥇 1위 집중 종목 ({investor_sel})", value=f"{top1['종목명']}", delta=f"{top1['순매수대금(억)']:+,.1f} 억")
+        with sc2:
+            st.metric(label=f"상위 {len(df_radar)}개사 합산 {trade_sel} 규모", value=f"{total_top_amt:+,.1f} 억원")
+        with sc3:
+            st.metric(label="📡 데이터 파이프라인 소스", value=data_source, delta=f"기준: {now_str}", delta_color="off")
 
-            # 수급 트리맵 시각화 (중앙 정렬 적용)
-            st.markdown(f"#### 🗺️ {investor_sel} {trade_sel} 상위 종목 맵 (Treemap)")
-            
-            df_radar["Abs_Amt"] = df_radar["순매수대금(억)"].abs()
-            fig_tree = px.treemap(
-                df_radar,
-                path=["종목명"],
-                values="Abs_Amt",
-                color="등락률(%)",
-                color_continuous_scale=["#388BFD", "#161B22", "#F85149"],
-                color_continuous_midpoint=0.0,
-                hover_data={"종목코드": True, "현재가": ":,.0f", "순매수대금(억)": ":+,.1f", "등락률(%)": ":+.2f"},
-                height=480
-            )
-            
-            # 텍스트 중앙 정렬 및 가독성 최적화
-            fig_tree.update_traces(
-                textposition="middle center",
-                textfont=dict(size=15, color="white", weight="bold"),
-                hovertemplate="<b>%{label}</b><br>현재가: %{customdata[1]:,.0f}원<br>등락률: %{customdata[3]:+.2f}%<br>순매수금액: %{customdata[2]:+,.1f}억원"
-            )
-            fig_tree.update_layout(
-                paper_bgcolor="#0D1117",
-                plot_bgcolor="#161B22",
-                margin=dict(l=10, r=10, t=20, b=10)
-            )
-            st.plotly_chart(fig_tree, use_container_width=True)
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
-            # 상세 랭킹 테이블
-            st.markdown(f"#### 📋 {investor_sel} {trade_sel} 상위 {len(df_radar)}개 종목 리스트")
-            st.dataframe(
-                df_radar[["순위", "종목코드", "종목명", "현재가", "등락률(%)", "순매수대금(억)"]],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "현재가": st.column_config.NumberColumn(format="%d 원"),
-                    "등락률(%)": st.column_config.NumberColumn(format="%+.2f%%"),
-                    "순매수대금(억)": st.column_config.NumberColumn(format="%+,.1f 억")
-                }
-            )
+        st.markdown(f"#### 🗺️ {investor_sel} {trade_sel} 상위 종목 맵 (Treemap)")
+        
+        df_radar["Abs_Amt"] = df_radar["순매수대금(억)"].abs()
+        fig_tree = px.treemap(
+            df_radar,
+            path=["종목명"],
+            values="Abs_Amt",
+            color="등락률(%)",
+            color_continuous_scale=["#388BFD", "#161B22", "#F85149"],
+            color_continuous_midpoint=0.0,
+            hover_data={"종목코드": True, "현재가": ":,.0f", "순매수대금(억)": ":+,.1f", "등락률(%)": ":+.2f"},
+            height=480
+        )
+        
+        fig_tree.update_traces(
+            textposition="middle center",
+            textfont=dict(size=15, color="white", weight="bold"),
+            hovertemplate="<b>%{label}</b><br>현재가: %{customdata[1]:,.0f}원<br>등락률: %{customdata[3]:+.2f}%<br>순매수금액: %{customdata[2]:+,.1f}억원"
+        )
+        fig_tree.update_layout(
+            paper_bgcolor="#0D1117",
+            plot_bgcolor="#161B22",
+            margin=dict(l=10, r=10, t=20, b=10)
+        )
+        st.plotly_chart(fig_tree, use_container_width=True)
+
+        st.markdown(f"#### 📋 {investor_sel} {trade_sel} 상위 {len(df_radar)}개 종목 리스트")
+        display_cols = ["순위", "종목코드", "종목명", "현재가", "등락률(%)", "순매수대금(억)"]
+        st.dataframe(
+            df_radar[display_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "현재가": st.column_config.NumberColumn(format="%d 원"),
+                "등락률(%)": st.column_config.NumberColumn(format="%+.2f%%"),
+                "순매수대금(억)": st.column_config.NumberColumn(format="%+,.1f 억")
+            }
+        )
 
     # ==========================================================================
     # TAB 2: 개별 종목 수급 정밀 분석 (영점조정 누적 수급 흐름도)
@@ -157,7 +158,6 @@ def render_radar_view():
         if not df_cum.empty:
             st.markdown(f"#### 📈 {selected_name} ({selected_code}) {cum_days}영업일 영점조정 누적 수급 곡선")
             
-            # Plotly 2축 복합 시계열 차트
             fig_cum = make_subplots(
                 rows=2, cols=1,
                 shared_xaxes=True,
@@ -169,68 +169,40 @@ def render_radar_view():
                 )
             )
 
-            # 1단: 주가 (우측 Y축)
             fig_cum.add_trace(
                 go.Scatter(
-                    x=df_cum["Date"],
-                    y=df_cum["Close"],
-                    name="주가 (종가)",
-                    line=dict(color="#C9D1D9", width=1.5, dash="dot"),
-                    yaxis="y2"
-                ),
-                row=1, col=1
+                    x=df_cum["Date"], y=df_cum["Close"],
+                    name="주가 (종가)", line=dict(color="#C9D1D9", width=1.5, dash="dot"), yaxis="y2"
+                ), row=1, col=1
             )
-
-            # 1단: 외국인 누적 수급
             fig_cum.add_trace(
                 go.Scatter(
-                    x=df_cum["Date"],
-                    y=df_cum["Foreigner_Cum"],
-                    name="외국인 누적(억)",
-                    line=dict(color="#F85149", width=2.5)
-                ),
-                row=1, col=1
+                    x=df_cum["Date"], y=df_cum["Foreigner_Cum"],
+                    name="외국인 누적(억)", line=dict(color="#F85149", width=2.5)
+                ), row=1, col=1
             )
-
-            # 1단: 기관 누적 수급
             fig_cum.add_trace(
                 go.Scatter(
-                    x=df_cum["Date"],
-                    y=df_cum["Institution_Cum"],
-                    name="기관 누적(억)",
-                    line=dict(color="#58A6FF", width=2)
-                ),
-                row=1, col=1
+                    x=df_cum["Date"], y=df_cum["Institution_Cum"],
+                    name="기관 누적(억)", line=dict(color="#58A6FF", width=2)
+                ), row=1, col=1
             )
-
-            # 1단: 개인 누적 수급
             fig_cum.add_trace(
                 go.Scatter(
-                    x=df_cum["Date"],
-                    y=df_cum["Retail_Cum"],
-                    name="개인 누적(억)",
-                    line=dict(color="#E3B341", width=1.5)
-                ),
-                row=1, col=1
+                    x=df_cum["Date"], y=df_cum["Retail_Cum"],
+                    name="개인 누적(억)", line=dict(color="#E3B341", width=1.5)
+                ), row=1, col=1
             )
-
-            # 2단: 외국인 일별 순매수 바차트
             fig_cum.add_trace(
                 go.Bar(
-                    x=df_cum["Date"],
-                    y=df_cum["Foreigner_Daily"],
-                    name="외인 일별(억)",
-                    marker_color=["#F85149" if v >= 0 else "#388BFD" for v in df_cum["Foreigner_Daily"]]
-                ),
-                row=2, col=1
+                    x=df_cum["Date"], y=df_cum["Foreigner_Daily"],
+                    name="외인 일별(억)", marker_color=["#F85149" if v >= 0 else "#388BFD" for v in df_cum["Foreigner_Daily"]]
+                ), row=2, col=1
             )
 
             fig_cum.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="#0D1117",
-                plot_bgcolor="#161B22",
-                height=650,
-                margin=dict(l=30, r=40, t=50, b=30),
+                template="plotly_dark", paper_bgcolor="#0D1117", plot_bgcolor="#161B22",
+                height=650, margin=dict(l=30, r=40, t=50, b=30),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 hovermode="x unified"
             )
@@ -239,10 +211,8 @@ def render_radar_view():
 
             st.plotly_chart(fig_cum, use_container_width=True)
 
-            # 일별 데이터 테이블
             with st.expander("📄 일별 수급 및 주가 원장 데이터 확인", expanded=False):
                 st.dataframe(
                     df_cum.sort_values("Date", ascending=False),
-                    use_container_width=True,
-                    hide_index=True
+                    use_container_width=True, hide_index=True
                 )
