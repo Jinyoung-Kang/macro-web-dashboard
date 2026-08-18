@@ -12,9 +12,26 @@ import pytz
 import requests
 import streamlit as st
 import yfinance as yf
-from config import MACRO_CATEGORIES, get_fred_key
+from config import MACRO_CATEGORIES
 
 logger = logging.getLogger(__name__)
+
+
+def get_fred_key() -> str:
+    """Streamlit Secrets에서 FRED API 키를 안전하게 추출"""
+    try:
+        if hasattr(st, "secrets") and st.secrets:
+            if "fred" in st.secrets:
+                val = st.secrets["fred"]
+                if isinstance(val, dict) and "api_key" in val:
+                    return str(val["api_key"]).strip()
+                return str(val).strip()
+            for k in ["FRED_API_KEY", "fred_api_key", "FRED_KEY", "fred_key"]:
+                if k in st.secrets:
+                    return str(st.secrets[k]).strip()
+    except Exception:
+        pass
+    return ""
 
 
 def clean_tag_ui(tag_str: str) -> str:
@@ -28,7 +45,7 @@ def clean_tag_ui(tag_str: str) -> str:
 
 
 # ==============================================================================
-# 1. 티커 시계열 데이터 수집 (MOVE 지수 3단계 무중단 복구 엔진 탑재)
+# 1. 티커 시계열 데이터 수집 (MOVE 지수 채권 변동성 프록시 탑재)
 # ==============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_ticker_data(symbol: str, period: str = "1mo") -> pd.DataFrame:
