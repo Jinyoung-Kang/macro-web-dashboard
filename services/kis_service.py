@@ -1,20 +1,58 @@
-# services/kis_service.py
-import streamlit as st
+"""
+services/kis_service.py
+한국투자증권(KIS) Open API 통신 엔진 및 토큰 관리 모듈
+"""
+import os
+import logging
 import requests
-import json
+import streamlit as st
 
-BASE_URL = "https://openapi.koreainvestment.com:9443"
+logger = logging.getLogger(__name__)
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_kis_token():
-    app_key = st.secrets.get("kis_api", {}).get("app_key")
-    app_secret = st.secrets.get("kis_api", {}).get("app_secret")
+def get_secret(key_path: str, default: str = "") -> str:
+    """Streamlit Secrets 및 환경변수 안전 로드"""
+    try:
+        if hasattr(st, "secrets") and st.secrets:
+            keys = key_path.split(".")
+            val = st.secrets
+            found = True
+            for k in keys:
+                if hasattr(val, "get") and val.get(k) is not None:
+                    val = val.get(k)
+                elif hasattr(val, "__getitem__") and k in val:
+                    val = val[k]
+                else:
+                    found = False
+                    break
+            if found and val is not None:
+                return str(val).strip()
 
+            leaf = keys[-1]
+            if hasattr(st.secrets, "get") and st.secrets.get(leaf) is not None:
+                return str(st.secrets.get(leaf)).strip()
+            if hasattr(st.secrets, "get") and st.secrets.get(leaf.upper()) is not None:
+                return str(st.secrets.get(leaf.upper())).strip()
+    except Exception:
+        pass
+    return os.environ.get(key_path, os.environ.get(key_path.replace(".", "_").upper(), default))
+
+
+KIS_APP_KEY = get_secret("kis.app_key", get_secret("KIS_APP_KEY", ""))
+KIS_APP_SECRET = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", ""))
+KIS_CANO = get_secret("kis.cano", get_secret("KIS_CANO", ""))
+KIS_ACNT_PRDT_CD = get_secret("kis.acnt_prdt_cd", get_secret("KIS_ACNT_PRDT_CD", "01"))
+KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_kis_access_token() -> str:
+    """KIS OAuth 2.0 Access Token 발급 및 캐싱"""
+    app_key = get_secret("kis.app_key", get_secret("KIS_APP_KEY", ""))
+    app_secret = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", ""))
+    
     if not app_key or not app_secret:
-        return None, "secrets.toml에 [kis_api] app_key 또는 app_secret이 설정되지 않았습니다."
+        return ""
 
-    url = f"{BASE_URL}/oauth2/tokenP"
-    headers = {"Content-Type": "application/json; charset=utf-8"}
+    url = f"{KIS_BASE_URL}/oauth2/tokenP"
     payload = {
         "grant_type": "client_credentials",
         "appkey": app_key,
@@ -22,107 +60,38 @@ def get_kis_token():
     }
 
     try:
-        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-        if resp.status_code == 200:
-            token_data = resp.json()
-            access_token = token_data.get("access_token")
-            if not access_token:
-                return None, f"토큰 발급 실패 (응답 데이터 이상): {token_data}"
-            return access_token, None
-        else:
-            return None, f"토큰 발급 실패 (HTTP {resp.status_code}): {resp.text}"
+        res = requests.post(url, json=payload, timeout=8)
+        if res.status_code == 200:
+            data = res.json()
+            return data.get("access_token", "")
     except Exception as e:
-        return None, f"통신 예외 발생: {str(e)}"
+        logger.warning(f"KIS Token 발급 실패: {e}")
+    return ""
 
-def fetch_kis_kospi_index():
-    token, err = get_kis_token()
-    if err or not token:
-        return None, f"토큰 오류: {err}"
 
-    app_key = st.secrets.get("kis_api", {}).get("app_key")
-    app_secret = st.secrets.get("kis_api", {}).get("app_secret")
+def call_kis_api(tr_id: str, endpoint: str, params: dict) -> dict:
+    """KIS API GET 공통 호출기"""
+    token = get_kis_access_token()
+    app_key = get_secret("kis.app_key", get_secret("KIS_APP_KEY", ""))
+    app_secret = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", ""))
 
-    url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-index-price"
+    if not token or not app_key:
+        return {}
+
+    url = f"{KIS_BASE_URL}{endpoint}"
     headers = {
         "Content-Type": "application/json; charset=utf-8",
         "authorization": f"Bearer {token}",
         "appkey": app_key,
         "appsecret": app_secret,
-        "tr_id": "FHPUP02100000",
+        "tr_id": tr_id,
         "custtype": "P"
-    }
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "U",
-        "FID_INPUT_ISCD": "0001"       
     }
 
     try:
-        resp = requests.get(url, headers=headers, params=params, timeout=8)
-        if resp.status_code == 200:
-            res_json = resp.json()
-            out = res_json.get("output", {})
-            if out:
-                price = float(out.get("bstp_nmix_prpr", 0))
-                diff = float(out.get("bstp_nmix_prdy_vrss", 0))
-                # 오타 수정: bstp_nmix_prdy_cttr -> bstp_nmix_prdy_ctrt
-                rate = float(out.get("bstp_nmix_prdy_ctrt", 0))
-                sign = str(out.get("prdy_vrss_sign", "3"))
-
-                if sign in ["4", "5"]:
-                    diff = -abs(diff)
-                    rate = -abs(rate)
-                elif sign in ["1", "2"]:
-                    diff = abs(diff)
-                    rate = abs(rate)
-                else:
-                    diff = 0.0
-                    rate = 0.0
-
-                prev_price = price - diff
-                return {
-                    "price": price,
-                    "prev_price": prev_price,
-                    "diff": diff,
-                    "rate": rate,
-                    "hname": out.get("hts_kor_isnm", "코스피 종합지수")
-                }, None
-            return None, f"응답 데이터 누락: {res_json}"
-        else:
-            return None, f"지수 조회 실패 (HTTP {resp.status_code}): {resp.text}"
+        res = requests.get(url, headers=headers, params=params, timeout=10)
+        if res.status_code == 200:
+            return res.json()
     except Exception as e:
-        return None, f"통신 예외: {str(e)}"
-
-def fetch_kis_stock_quote(shcode: str = "005930"):
-    token, err = get_kis_token()
-    if err or not token:
-        return None, err
-
-    app_key = st.secrets.get("kis_api", {}).get("app_key")
-    app_secret = st.secrets.get("kis_api", {}).get("app_secret")
-
-    url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price"
-    headers = {
-        "Content-Type": "application/json; charset=utf-8",
-        "authorization": f"Bearer {token}",
-        "appkey": app_key,
-        "appsecret": app_secret,
-        "tr_id": "FHKST01010100",
-        "custtype": "P"
-    }
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_INPUT_ISCD": shcode.strip()
-    }
-
-    try:
-        resp = requests.get(url, headers=headers, params=params, timeout=10)
-        if resp.status_code == 200:
-            res_json = resp.json()
-            output = res_json.get("output", {})
-            if output:
-                return output, None
-            return None, f"응답 데이터 누락: {res_json}"
-        else:
-            return None, f"시세 조회 실패 (HTTP {resp.status_code}): {resp.text}"
-    except Exception as e:
-        return None, f"통신 예외: {str(e)}"
+        logger.warning(f"KIS API ({tr_id}) 호출 실패: {e}")
+    return {}
