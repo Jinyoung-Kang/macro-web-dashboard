@@ -7,13 +7,13 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
-from config import KRX_AUTH_KEY
+from config import get_krx_key
 from services.krx_service import get_krx_futures_history, get_krx_investor_derivatives_summary
 from services.ai_service import ask_investment_agent
 
 def render_krx_cot_view():
     st.markdown("""
-    <div style="padding: 12px 0 20px 0;">
+    <div style="padding: 6px 0 16px 0;">
         <h2 style="margin:0; font-weight: 700; color: #F0F6FC;">
             🇰🇷 국내 파생상품 수급 & COT 한국판
         </h2>
@@ -23,8 +23,9 @@ def render_krx_cot_view():
     </div>
     """, unsafe_allow_html=True)
 
-    if not KRX_AUTH_KEY:
-        st.info("💡 **KRX OPEN API 인증키가 미등록 상태입니다.** 현재 KODEX 200 기반 프록시 시뮬레이션 모드로 작동 중입니다. 정밀한 원장 데이터를 연동하려면 `.streamlit/secrets.toml`에 `[krx] api_key = '...'`를 추가하세요.")
+    auth_key = get_krx_key()
+    if not auth_key:
+        st.info("💡 **KRX OPEN API 인증키가 미등록 상태입니다.** 현재 KODEX 200 기반 프록시 모드로 작동 중입니다. 정밀 원장 데이터를 연동하려면 Streamlit 설정(Secrets)에 `[krx] api_key = '...'`를 등록하세요.")
 
     c1, c2, c3 = st.columns([2, 2, 1])
     with c1:
@@ -53,7 +54,7 @@ def render_krx_cot_view():
     latest = df_hist.iloc[-1]
     prev = df_hist.iloc[-2] if len(df_hist) > 1 else latest
 
-    # 메트릭스 카드
+    # 상단 4대 핵심 지표 카드
     m1, m2, m3, m4 = st.columns(4)
     with m1:
         st.metric(
@@ -147,8 +148,8 @@ def render_krx_cot_view():
         template="plotly_dark",
         paper_bgcolor="#0D1117",
         plot_bgcolor="#161B22",
-        height=720,
-        margin=dict(l=40, r=40, t=50, b=30),
+        height=680,
+        margin=dict(l=30, r=30, t=50, b=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hovermode="x unified"
     )
@@ -159,7 +160,7 @@ def render_krx_cot_view():
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # 국면 매트릭스 & 포지션 테이블
+    # 하단 분석 매트릭스
     col_left, col_right = st.columns([1.2, 1])
 
     with col_left:
@@ -224,7 +225,7 @@ def render_krx_cot_view():
         )
 
     # AI 브리핑
-    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
     st.markdown("#### 🤖 AI 파생 수급 & 스마트머니 종합 진단")
 
     if st.button("🧠 현재 파생 수급 기반 투자 가설 & 포지션 AI 검증", use_container_width=True):
