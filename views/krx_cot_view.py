@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 import pandas as pd
 from config import get_krx_key
 from services.krx_service import get_krx_futures_history, get_krx_investor_derivatives_summary
-from services.ai_service import ask_investment_agent
+from services.ai_service import ask_krx_cot_agent
 
 def render_krx_cot_view():
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
@@ -263,13 +263,13 @@ def render_krx_cot_view():
         )
 
     # ==========================================================================
-    # 4. AI 파생 수급 & 스마트머니 종합 진단 (마크다운 렌더링 정상화)
+    # 4. AI 파생 수급 & 스마트머니 종합 진단 (마크다운 완벽 렌더링)
     # ==========================================================================
     st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
     st.markdown("#### 🤖 AI 파생 수급 & 스마트머니 종합 진단")
 
     if st.button("🧠 현재 파생 수급 기반 투자 가설 & 심층 결론 리포트 생성", use_container_width=True):
-        with st.spinner("한국 파생시장(KOSPI 200 선물, 베이시스, OI 국면) 데이터를 분석하여 심층 AI 리포트를 생성하고 있습니다..."):
+        with st.spinner("한국 파생시장(KOSPI 200 선물, 베이시스, OI 국면) 데이터를 분석하여 정밀 AI 리포트를 생성하고 있습니다..."):
             prompt = f"""
             [국내 파생시장 확정 데이터 및 한국판 COT 수급 현황]
             - 데이터 기준일: {data_date_str} (분석 시각: {now_str})
@@ -281,22 +281,16 @@ def render_krx_cot_view():
             - 한국판 COT OI Index: {latest['COT_OI_Index']:.1f}% (0%=극단적 과매도/침체, 100%=극단적 과열/고점 경계)
             - 투자 주체별 누적 수급(20일): 외국인 +38,500계약(롱), 금융투자 -24,100계약(헤지), 개인 -7,600계약
 
-            당신은 월스트리트 헤지펀드의 시니어 파생 퀀트이자 냉정한 매크로 전략가입니다.
-            단순 현상 요약이나 피상적인 위로를 배제하고, 다음 4가지 항목에 대해 명확하고 비판적으로 심층 분석을 작성하십시오:
-
-            1. **단기(1~3일) 현물/선물 방향성 및 프로그램 수급 압력**:
-               - 선물 베이시스와 미결제약정 변화가 시사하는 외국인/기관의 프로그램 차익 매수 또는 매도 출회 가능성을 정량적으로 진단하라.
-            2. **시장 취약성 및 리스크 요인 (숏스퀴즈 vs 롱트랩)**:
-               - 현재 포지션이 숏스퀴즈 유발 국면인지, 아니면 과열에 따른 롱 청산(롱 트랩) 위험 구간인지 판별하라.
-            3. **중기(1~4주) KOSPI 200 지수 상·하단 밴드 전망**:
-               - 현재 파생 수급 에너지를 감안할 때 예상되는 지지선과 저항선 레벨을 제시하라.
-            4. **[핵심 결론] 투자자를 위한 실전 포트폴리오 행동 지침 (Actionable Playbook)**:
-               - 결론 부문을 가장 상세하게 작성하라.
-               - 구체적인 자산 배분 비중 권고 (현금 비중 %, 주식 롱 비중 %, 파생/인버스 헤지 비중 %).
-               - 대형주(반도체/금융/지수 ETF)와 중소형주에 대한 구체적인 매매 실행 타이밍(분할 매수/차익 실현/손절 기준)을 구체적인 조건과 함께 명시하라.
+            위 데이터를 기반으로 시스템 프롬프트(KRX_DERIVATIVES_PROMPT)의 4단계 규격에 맞추어 냉정하고 명확한 한글 심층 분석을 작성하라.
             """
-            analysis_result = ask_investment_agent(prompt)
+            ai_res = ask_krx_cot_agent(prompt)
             
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
             with st.container(border=True):
-                st.markdown(analysis_result)
+                # 헤더 정보 (엔진 단계 표시)
+                step_info = ai_res.get("pipeline_step", "AI 응답 완료")
+                st.caption(f"⚡ **생성 엔진 파이프라인**: `{step_info}`")
+                st.divider()
+                
+                # 마크다운 본문 렌더링
+                st.markdown(ai_res.get("response", ""))
