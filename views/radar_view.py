@@ -5,6 +5,7 @@ views/radar_view.py
 """
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+import re
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -58,9 +59,19 @@ def render_radar_view():
                 **해결 방법**: `requirements.txt` 파일 맨 아래에 `pykrx`를 추가하고 앱을 재부팅해 주세요.
                 """)
             else:
-                st.warning(f"⚠️ **{target_date.strftime('%Y-%m-%d')} 기준 수급 데이터가 없습니다.**\n\n휴장일(주말/공휴일)이거나, 아직 거래소 원장 데이터가 업데이트되지 않았습니다.")
+                st.warning("⚠️ **최근 7일 내의 거래소 확정 수급 데이터를 찾을 수 없습니다.** 거래소 점검 중이거나 인터넷 연결을 확인해 주세요.")
         else:
-            data_source = df_radar["데이터_출처"].iloc[0] if "데이터_출처" in df_radar.columns else "공식 거래소"
+            data_source = df_radar["데이터_출처"].iloc[0] if "데이터_출처" in df_radar.columns else "공식 거래소 API"
+            
+            # 반환된 데이터의 실제 기준일자 추출
+            match = re.search(r'\((\d{8}|\d{4}-\d{2}-\d{2})\)', data_source)
+            actual_data_date = match.group(1) if match else target_date.strftime('%Y-%m-%d')
+            
+            # 사용자가 선택한 날짜와 실제 반환된 데이터 날짜가 다를 경우 알림
+            target_date_str_compact = target_date.strftime('%Y%m%d')
+            if actual_data_date.replace("-", "") != target_date_str_compact and "Daum" not in data_source:
+                st.info(f"💡 **자동 조정 안내**: 선택하신 `{target_date.strftime('%Y-%m-%d')}`는 휴장일이거나 아직 데이터가 집계되지 않았습니다. **가장 최근 거래일({actual_data_date})의 확정 데이터**를 표출합니다.")
+
             top1 = df_radar.iloc[0]
             total_top_amt = df_radar["순매수대금(억)"].sum()
             
@@ -70,11 +81,11 @@ def render_radar_view():
             with sc2:
                 st.metric(label=f"상위 {len(df_radar)}개사 합산 {trade_sel} 규모", value=f"{total_top_amt:+,.1f} 억원")
             with sc3:
-                st.metric(label="📅 조회 기준일자 및 소스", value=target_date.strftime('%Y-%m-%d'), delta=data_source, delta_color="off")
+                st.metric(label="📅 실제 데이터 기준일자 및 소스", value=actual_data_date, delta=data_source.split('(')[0].strip(), delta_color="off")
 
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
-            st.markdown(f"#### 🗺️ {target_date.strftime('%Y-%m-%d')} | {investor_sel} {trade_sel} 상위 종목 맵")
+            st.markdown(f"#### 🗺️ {investor_sel} {trade_sel} 상위 종목 맵")
             
             df_radar["Abs_Amt"] = df_radar["순매수대금(억)"].abs()
             fig_tree = px.treemap(
