@@ -3,28 +3,38 @@ views/ai_report_view.py
 🤖 AI 종합 데이터 분석 & 결론 리포트
 전체 메뉴의 데이터를 수집하여 AI로 분석 결과를 도출합니다.
 """
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import streamlit as st
 import pandas as pd
 from services.ai_service import call_selected_ai_engine
 from services.prompts import COMPREHENSIVE_REPORT_PROMPT
 
-# 각 서비스 모듈에서 데이터 수집 (에러 방지를 위해 try-except로 철저히 감쌈)
 def build_comprehensive_context() -> str:
-    context = "### [대시보드 전체 종합 데이터 (Global Market Aggregated Data)]\n\n"
+    """대시보드의 5대 핵심 모듈 데이터를 안전하게 취합하는 Context 빌더"""
+    now_str = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S KST")
+    context = f"### [대시보드 전체 종합 데이터 (Global Market Aggregated Data)]\n- 데이터 수집 기준 시각: {now_str}\n\n"
     
-    # 1. 거시경제 매크로
+    # 1. 거시경제 매크로 (언패킹 오류 방지)
     try:
         from services.macro_service import get_collected_macro_data
-        macro_data = get_collected_macro_data()
-        context += "#### 1. 거시경제 매크로 지표\n"
-        for cat, items in macro_data.items():
-            context += f"- {cat}\n"
-            for name, info in items.items():
-                price = info.get("price", "N/A")
-                pct = info.get("change_pct", "N/A")
-                context += f"  * {name}: {price} ({pct}%)\n"
+        # get_collected_macro_data()는 (collected_data, r10_c, r10_p, r2_c, r2_p) 형태의 튜플을 반환
+        macro_result = get_collected_macro_data()
+        
+        # 첫 번째 요소가 실제 딕셔너리인지 안전하게 검증
+        if isinstance(macro_result, tuple) and len(macro_result) >= 1 and isinstance(macro_result[0], dict):
+            macro_data_dict = macro_result[0]
+            context += "#### 1. 거시경제 매크로 지표\n"
+            for cat, items in macro_data_dict.items():
+                context += f"- {cat}\n"
+                for name, info in items.items():
+                    price = info.get("price", "N/A")
+                    pct = info.get("change_pct", "N/A")
+                    context += f"  * {name}: {price} ({pct}%)\n"
+        else:
+            context += "#### 1. 거시경제 매크로 지표\n- 데이터 형식이 올바르지 않아 매크로 지표를 로드할 수 없습니다.\n"
     except Exception as e:
-        context += f"- 매크로 데이터 로드 실패: {e}\n"
+        context += f"#### 1. 거시경제 매크로 지표\n- 데이터 로드 실패: {e}\n"
 
     # 2. 연준 유동성
     try:
