@@ -88,32 +88,44 @@ def build_comprehensive_context() -> str:
         context += f"- 매크로 데이터 로드 중 오류: {e}\n"
 
     # =========================================================================
-    # 2. 연준 순유동성 트래커
+    # 2. 연준 순유동성 트래커 (FRED 원장 단위 Millions -> Trillions/Billions 완벽 교정)
     # =========================================================================
     context += "\n#### 2. 연준 순유동성 트래커\n"
     try:
         import services.macro_service as ms
-        walcl = ms.fetch_fred_series("WALCL")
-        wtre = ms.fetch_fred_series("WTREGEN")
-        rrp = ms.fetch_fred_series("RRPONTSYD")
+        walcl = ms.fetch_fred_series("WALCL")       # 단위: Millions ($M)
+        wtre = ms.fetch_fred_series("WTREGEN")     # 단위: Millions ($M)
+        rrp = ms.fetch_fred_series("RRPONTSYD")    # 단위: Billions ($B)
+        
         if walcl is not None and wtre is not None and rrp is not None:
-            combined = pd.DataFrame({'WALCL': walcl['WALCL'], 'WTREGEN': wtre['WTREGEN'], 'RRPONTSYD': rrp['RRPONTSYD']}).ffill().dropna()
-            combined['Net_Liquidity'] = combined['WALCL'] - combined['WTREGEN'] - combined['RRPONTSYD']
+            # RRP는 Billions 단위이므로 Millions로 맞춰서 계산
+            rrp_in_m = rrp['RRPONTSYD'] * 1000.0 if rrp['RRPONTSYD'].max() < 10000 else rrp['RRPONTSYD']
+            
+            combined = pd.DataFrame({'WALCL': walcl['WALCL'], 'WTREGEN': wtre['WTREGEN'], 'RRP': rrp_in_m}).ffill().dropna()
+            combined['Net_Liquidity_M'] = combined['WALCL'] - combined['WTREGEN'] - combined['RRP']
             
             last_liq = combined.iloc[-1]
             prev_liq = combined.iloc[-2] if len(combined) > 1 else last_liq
             date_str = combined.index[-1].strftime('%Y-%m-%d')
             
-            w_curr, w_chg = last_liq['WALCL'], last_liq['WALCL'] - prev_liq['WALCL']
-            t_curr, t_chg = last_liq['WTREGEN'], last_liq['WTREGEN'] - prev_liq['WTREGEN']
-            r_curr, r_chg = last_liq['RRPONTSYD'], last_liq['RRPONTSYD'] - prev_liq['RRPONTSYD']
-            n_curr, n_chg = last_liq['Net_Liquidity'], last_liq['Net_Liquidity'] - prev_liq['Net_Liquidity']
+            # 단위 환산: Millions -> Trillions($T) 및 Billions($B)
+            walcl_t = last_liq['WALCL'] / 1000000.0
+            walcl_chg_b = (last_liq['WALCL'] - prev_liq['WALCL']) / 1000.0
             
-            context += f"- 기준일: {date_str} (FRED 공식 주간 발표 데이터)\n"
-            context += f"- 연준 총자산 (WALCL): ${w_curr/1e9:.1f}B ({w_chg/1e9:+.1f}B WoW)\n"
-            context += f"- 재무부 일반계정 (TGA): ${t_curr/1e9:.1f}B ({t_chg/1e9:+.1f}B WoW)\n"
-            context += f"- 역레포 잔고 (ON RRP): ${r_curr/1e9:.1f}B ({r_chg/1e9:+.1f}B WoW)\n"
-            context += f"- 연준 순유동성 (Net Liquidity): ${n_curr/1e9:.1f}B ({n_chg/1e9:+.1f}B WoW)\n"
+            wtre_b = last_liq['WTREGEN'] / 1000.0
+            wtre_chg_b = (last_liq['WTREGEN'] - prev_liq['WTREGEN']) / 1000.0
+            
+            rrp_b = last_liq['RRP'] / 1000.0
+            rrp_chg_b = (last_liq['RRP'] - prev_liq['RRP']) / 1000.0
+            
+            net_t = last_liq['Net_Liquidity_M'] / 1000000.0
+            net_chg_b = (last_liq['Net_Liquidity_M'] - prev_liq['Net_Liquidity_M']) / 1000.0
+            
+            context += f"- 기준일: {date_str} (FRED 주간 공식 발표 데이터)\n"
+            context += f"- 연준 총자산 (WALCL): ${walcl_t:.3f} T ({walcl_chg_b:+.1f} B WoW)\n"
+            context += f"- 재무부 일반계정 (TGA): ${wtre_b:.1f} B ({wtre_chg_b:+.1f} B WoW)\n"
+            context += f"- 역레포 잔고 (ON RRP): ${rrp_b:.1f} B ({rrp_chg_b:+.1f} B WoW)\n"
+            context += f"- 연준 순유동성 (Net Liquidity): ${net_t:.3f} T (주간 변동: {net_chg_b:+.1f} B)\n"
     except Exception as e:
         context += f"- 연준 순유동성 로드 실패: {e}\n"
 
@@ -151,15 +163,14 @@ def build_comprehensive_context() -> str:
             df_3m = pd.DataFrame(rows_3m).sort_values("Return", ascending=False)
             
             context += f"- 종가 기준일: {latest_sec_date}\n"
-            context += "- **최근 1주일 (1W) 수익률 Top 5**:\n"
-            for _, r in df_1w.head(5).iterrows():
-                context += f"  * {r['Sector']}: {r['Return']:+.2f}%\n"
-            context += "- **최근 1개월 (1M) 수익률 Top 5**:\n"
-            for _, r in df_1m.head(5).iterrows():
-                context += f"  * {r['Sector']}: {r['Return']:+.2f}%\n"
-            context += "- **최근 3개월 (3M) 수익률 Top 5**:\n"
-            for _, r in df_3m.head(5).iterrows():
-                context += f"  * {r['Sector']}: {r['Return']:+.2f}%\n"
+            
+            top5_1w = ", ".join([f"{r['Sector']} ({r['Return']:+.2f}%)" for _, r in df_1w.head(5).iterrows()])
+            top5_1m = ", ".join([f"{r['Sector']} ({r['Return']:+.2f}%)" for _, r in df_1m.head(5).iterrows()])
+            top5_3m = ", ".join([f"{r['Sector']} ({r['Return']:+.2f}%)" for _, r in df_3m.head(5).iterrows()])
+            
+            context += f"- **1주일 (1W) 상위 5개 섹터**: {top5_1w}\n"
+            context += f"- **1개월 (1M) 상위 5개 섹터**: {top5_1m}\n"
+            context += f"- **3개월 (3M) 상위 5개 섹터**: {top5_3m}\n"
     except Exception as e:
         context += f"- 섹터 로테이션 로드 실패: {e}\n"
 
