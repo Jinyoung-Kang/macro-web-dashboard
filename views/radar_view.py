@@ -64,8 +64,6 @@ def render_radar_view():
             top_n = st.selectbox("표시 종목 수", options=[15, 30, 50], index=1)
 
         market_key = "KOSPI" if "KOSPI" in market_sel else "KOSDAQ"
-        
-        # 무중단 파이프라인에서 데이터 로드
         df_radar = get_market_radar_scanner(market=market_key, investor=investor_sel, trade_type=trade_sel, top_n=top_n)
 
         if df_radar.empty:
@@ -74,7 +72,7 @@ def render_radar_view():
             
             **[실패 원인 점검 가이드]**:
             1. **장 마감 후 원장 정리 시간**: 평일 15:30 이후 또는 야간 시간대에는 증권사 실시간 속보 TR이 초기화되어 데이터를 반환하지 않습니다.
-            2. **API 키 설정 상태**: Streamlit Secrets에 `[ls]` 또는 `[kis]` API 인증키가 올바르게 등록되어 있는지 확인하십시오.
+            2. **API 키 설정 상태**: Streamlit Secrets에 `[krx]`, `[ls]` 또는 `[kis]` API 인증키가 올바르게 등록되어 있는지 확인하십시오.
             3. **개별 종목 정밀 분석 탭 이용**: 2번째 탭인 **[개별 종목 수급 정밀 분석]**에서 과거 30영업일 누적 수급 흐름을 조회하십시오.
             """)
         else:
@@ -84,7 +82,7 @@ def render_radar_view():
             
             sc1, sc2, sc3 = st.columns(3)
             with sc1:
-                st.metric(label=f"🥇 1위 집중 종목 ({investor_sel})", value=f"{top1['종목명']}", delta=f"{top1['순매수대금(억)']:+,.1f} 억")
+                st.metric(label=f"🥇 1위 집중 종목 ({investor_sel} {trade_sel})", value=f"{top1['종목명']}", delta=f"{top1['순매수대금(억)']:+,.1f} 억")
             with sc2:
                 st.metric(label=f"상위 {len(df_radar)}개사 합산 {trade_sel} 규모", value=f"{total_top_amt:+,.1f} 억원")
             with sc3:
@@ -110,7 +108,7 @@ def render_radar_view():
             fig_tree.update_traces(
                 textposition="middle center",
                 textfont=dict(size=15, color="white", weight="bold"),
-                hovertemplate="<b>%{label}</b><br>현재가: %{customdata[1]:,.0f}원<br>등락률: %{customdata[3]:+.2f}%<br>순매수금액: %{customdata[2]:+,.1f}억원"
+                hovertemplate="<b>%{label}</b><br>현재가: %{customdata[1]:,.0f}원<br>등락률: %{customdata[3]:+.2f}%<br>금액: %{customdata[2]:+,.1f}억원"
             )
             fig_tree.update_layout(
                 paper_bgcolor="#0D1117",
