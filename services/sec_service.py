@@ -1,159 +1,290 @@
-# services/sec_service.py
+# views/sec_view.py
 import streamlit as st
-import requests
-import xml.etree.ElementTree as ET
-from bs4 import BeautifulSoup
+import plotly.graph_objects as go
+import plotly.express as px
 import pandas as pd
+from config import INSTITUTIONS
+from services.macro_service import fetch_ticker_data
+from services.sec_service import fetch_sec_13f_multi_quarters, classify_qoq_action
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def parse_single_13f(cik: str, acc_clean: str, accession_number: str, report_date: str, user_agent: str):
-    headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
-    dir_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/index.json"
-    
-    try:
-        dir_resp = requests.get(dir_url, headers=headers, timeout=15)
-        xml_filename = None
-        if dir_resp.status_code == 200:
-            dir_data = dir_resp.json()
-            for item in dir_data.get('directory', {}).get('item', []):
-                name = item.get('name', '')
-                if name.endswith('.xml') and not name.startswith('primary') and '13f' in name.lower():
-                    xml_filename = name
-                    break
-            if not xml_filename:
-                for item in dir_data.get('directory', {}).get('item', []):
-                    name = item.get('name', '')
-                    if name.endswith('.xml') and not name.startswith('primary'):
-                        xml_filename = name
-                        break
+def render_sec_view():
+    st.title("📑 주요 기관들의 포트폴리오 (13F Holdings & QoQ Analysis)")
+    st.caption("SEC EDGAR 공식 공시 데이터 기반 미국 주요 기관 투자자 포트폴리오 분석 & 기간별 비중 추적")
+
+    selected_inst_name = st.selectbox("분석할 기관을 선택하세요", options=list(INSTITUTIONS.keys()), index=0)
+    inst_info = INSTITUTIONS[selected_inst_name]
+    st.info(f"💡 **기관 소개:** {inst_info['desc']} (SEC CIK: `{inst_info['cik']}`)", icon="ℹ️")
+
+    with st.spinner("SEC EDGAR에서 최근 분기별 13F 공시 데이터를 수집 및 분석 중입니다..."):
+        all_history_results, err_msg = fetch_sec_13f_multi_quarters(inst_info['cik'], max_quarters=8)
+
+    if err_msg or not all_history_results:
+        st.error(f"⚠️ {err_msg if err_msg else '데이터를 불러올 수 없습니다.'}")
+        return
+
+    latest_df, latest_meta_info = all_history_results[0]
+    latest_df = latest_df.sort_values(by='value', ascending=False).reset_index(drop=True)
+
+    meta = {
+        "report_date": latest_meta_info['report_date'],
+        "filing_date": latest_meta_info['filing_date'],
+        "total_aum": latest_df['value'].sum(),
+        "total_count": len(latest_df),
+        "top10_weight": latest_df.head(10)['weight'].sum()
+    }
+
+    # 원/달러 환율 종가 기준 원화 환산
+    usdkrw_hist = fetch_ticker_data("KRW=X", period="5d")
+    usdkrw_prev = 1416.85
+    if usdkrw_hist is not None and len(usdkrw_hist) >= 2:
+        usdkrw_prev = float(usdkrw_hist['Close'].iloc[-2])
+    elif usdkrw_hist is not None and len(usdkrw_hist) == 1:
+        usdkrw_prev = float(usdkrw_hist['Close'].iloc[-1])
+
+    total_aum_krw = meta['total_aum'] * usdkrw_prev
+    aum_krw_str = f"약 {total_aum_krw/1e12:,.1f}조 원" if total_aum_krw >= 1e12 else f"약 {total_aum_krw/1e8:,.0f}억 원"
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric(
+        "총 운용자산 (AUM)", 
+        f"${meta['total_aum']/1e9:,.2f} B", 
+        delta=f"KRW {aum_krw_str}",
+        delta_color="off",
+        help=f"13F 공시 대상 미국 주식 총 평가액\n원/달러 전일 공식 종가({usdkrw_prev:,.2f}원/$) 기준 환산: {aum_krw_str}"
+    )
+    m2.metric("보유 종목 수", f"{meta['total_count']:,} 개")
+    m3.metric("Top 10 집중도", f"{meta['top10_weight']:.1f} %", help="상위 10개 종목이 전체 포트폴리오에서 차지하는 비중")
+    m4.metric("최신 보고서 기준일 (QoQ)", meta['report_date'], help=f"공시 제출일: {meta['filing_date']}")
+
+    st.divider()
+
+    st.subheader("📊 포트폴리오 시각화 및 기간별 비중 추이")
+    tab_v1, tab_v2, tab_v3, tab_v4 = st.tabs([
+        "🌳 포트폴리오 트리맵 (Treemap)", 
+        "📈 기간별 비중 변화 추이 (QoQ History)",
+        "🔄 직전 분기 대비 매수/매도 변동 (QoQ Changes)",
+        "📊 상위 종목 비중 순위"
+    ])
+
+    # TAB 1: 트리맵
+    with tab_v1:
+        st.markdown("#### ⚙️ 트리맵 조회 조건 설정")
+        col_t1, col_t2 = st.columns([1, 1])
         
-        if not xml_filename:
-            htm_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{accession_number}-index.htm"
-            htm_resp = requests.get(htm_url, headers=headers, timeout=15)
-            if htm_resp.status_code == 200:
-                soup = BeautifulSoup(htm_resp.text, 'html.parser')
-                for row in soup.find_all('tr'):
-                    text = row.get_text()
-                    if 'INFORMATION TABLE' in text and '.xml' in text:
-                        for link in row.find_all('a'):
-                            if link.get('href', '').endswith('.xml'):
-                                xml_filename = link.get('href').split('/')[-1]
-                                break
+        with col_t1:
+            available_dates = [q_meta['report_date'] for _, q_meta in all_history_results]
+            selected_report_date = st.selectbox(
+                "기준 공시일(분기) 선택",
+                options=available_dates,
+                index=0,
+                key="treemap_date_select"
+            )
+            
+        selected_tree_df = None
+        for df_q, q_meta in all_history_results:
+            if q_meta['report_date'] == selected_report_date:
+                selected_tree_df = df_q.sort_values(by='value', ascending=False).reset_index(drop=True)
+                break
+                
+        if selected_tree_df is not None:
+            with col_t2:
+                tree_options = [10, 20, 30, 40, 50, 70, 100]
+                valid_tree_options = [n for n in tree_options if n <= len(selected_tree_df)] or [min(10, len(selected_tree_df))]
+                
+                tree_n = st.selectbox(
+                    "트리맵 표시 종목 수 선택",
+                    options=valid_tree_options,
+                    index=min(3, len(valid_tree_options)-1),
+                    format_func=lambda x: f"상위 Top {x}개 종목",
+                    key="treemap_n_select"
+                )
+                
+            df_tree = selected_tree_df.head(tree_n).copy()
+            df_tree['value_m'] = df_tree['value'] / 1e6
+            
+            df_tree['display_label'] = (
+                "<b>" + df_tree['name'] + "</b><br>" + 
+                df_tree['weight'].apply(lambda x: f"{x:.2f}%") + "<br>" + 
+                df_tree['value_m'].apply(lambda x: f"${x:,.1f}M")
+            )
+            
+            fig_tree = px.treemap(
+                df_tree,
+                path=['name'],
+                values='value',
+                title=f"{selected_inst_name} 주요 보유 종목 트리맵 (Top {tree_n}, 기준일: {selected_report_date})",
+                color='weight',
+                color_continuous_scale='Burg'
+            )
+            
+            fig_tree.update_traces(
+                text=df_tree['display_label'],
+                textinfo="text",
+                textposition="middle center",
+                insidetextfont=dict(size=14, color="#161617", family="Arial, sans-serif"),
+                marker=dict(line=dict(color="#0F172A", width=1.5)),
+                hovertemplate="<b>%{label}</b><br>평가액: $%{value:,.0f}<br>포트폴리오 비중: %{color:.2f}%<extra></extra>"
+            )
+            
+            dynamic_tree_height = max(480, int(360 + tree_n * 5.5))
+            fig_tree.update_layout(
+                height=dynamic_tree_height,
+                margin=dict(l=10, r=10, t=40, b=10),
+                coloraxis_colorbar=dict(title="비중 (%)")
+            )
+            st.plotly_chart(fig_tree, use_container_width=True)
 
-        if not xml_filename:
-            return None
+    # TAB 2: 기간별 비중 추이
+    with tab_v2:
+        st.markdown("#### ⚙️ 기간별 비중 추이 조건 설정")
+        col_ctl1, col_ctl2 = st.columns([1, 1])
+        with col_ctl1:
+            quarter_options = [2, 4, 6, 8]
+            valid_q_options = [q for q in quarter_options if q <= len(all_history_results)] or [len(all_history_results)]
+            selected_q_count = st.selectbox("조회 기간 선택 (분기)", options=valid_q_options, index=min(1, len(valid_q_options)-1), format_func=lambda x: f"최근 {x}개 분기 ({x*3}개월)")
 
-        xml_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{xml_filename}"
-        xml_resp = requests.get(xml_url, headers=headers, timeout=25)
-        if xml_resp.status_code != 200:
-            return None
+        with col_ctl2:
+            top_n_options = [10, 20, 30, 40, 50]
+            valid_top_n = [n for n in top_n_options if n <= len(latest_df)] or [min(10, len(latest_df))]
+            selected_top_n = st.selectbox("비교할 상위 종목 수 (Top N)", options=valid_top_n, index=0, format_func=lambda x: f"상위 Top {x}개 종목")
 
-        root = ET.fromstring(xml_resp.content)
-        holdings = []
-        for child in root:
-            tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-            if tag_name.lower() in ['infotable', 'informationtable']:
-                row = {}
-                for elem in child:
-                    t = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
-                    if t == 'nameOfIssuer':
-                        row['name'] = elem.text.strip().upper() if elem.text else ""
-                    elif t == 'titleOfClass':
-                        row['class'] = elem.text
-                    elif t == 'cusip':
-                        row['cusip'] = elem.text
-                    elif t == 'value':
-                        try:
-                            row['value'] = float(elem.text)
-                        except Exception:
-                            row['value'] = 0.0
-                    elif t == 'shrsOrPrnAmt':
-                        for sub in elem:
-                            subt = sub.tag.split('}')[-1] if '}' in sub.tag else sub.tag
-                            if subt == 'sshPrnamt':
-                                try:
-                                    row['shares'] = float(sub.text)
-                                except Exception:
-                                    row['shares'] = 0.0
-                if row.get('name') and row.get('value', 0) > 0:
-                    holdings.append(row)
+        active_history = all_history_results[:selected_q_count]
+        combined_hist = pd.concat([df_q.copy() for df_q, _ in active_history], ignore_index=True)
+        default_top_tickers = latest_df.head(selected_top_n)['name'].tolist()
 
-        if not holdings:
-            return None
+        custom_tickers = st.multiselect("특정 종목만 직접 선택하여 비교 (선택 시 상위 N 대신 아래 선택 종목만 표기)", options=latest_df['name'].tolist(), default=[])
+        target_tickers = custom_tickers if custom_tickers else default_top_tickers
 
-        df = pd.DataFrame(holdings)
-        total_v = df['value'].sum()
-        if total_v < 10000000 and len(df) > 10:
-            df['value'] = df['value'] * 1000
+        df_top_hist = combined_hist[combined_hist['name'].isin(target_tickers)].copy()
+        df_top_hist['report_date'] = pd.to_datetime(df_top_hist['report_date'])
+        df_top_hist = df_top_hist.sort_values(by='report_date', ascending=True)
+        df_top_hist['report_date_str'] = df_top_hist['report_date'].dt.strftime('%Y-%m-%d')
 
-        df = df.groupby('name', as_index=False).agg({
-            'value': 'sum',
-            'shares': 'sum',
-            'class': 'first',
-            'cusip': 'first'
-        })
-        df['weight'] = (df['value'] / df['value'].sum()) * 100
-        df['report_date'] = report_date
-        return df
-    except Exception:
-        return None
+        distinct_colors = (px.colors.qualitative.Plotly + px.colors.qualitative.Alphabet + px.colors.qualitative.Dark24 + px.colors.qualitative.Light24)
+        fig_trend = go.Figure()
+        max_y_val = df_top_hist['weight'].max() if not df_top_hist.empty else 10
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 8):
-    user_agent = st.secrets.get("sec", {}).get("user_agent", "MacroDashboard user@gmail.com")
-    headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
-    
-    try:
-        sub_url = f"https://data.sec.gov/submissions/CIK{cik.zfill(10)}.json"
-        r = requests.get(sub_url, headers=headers, timeout=15)
-        if r.status_code != 200:
-            return None, f"SEC API 접근 실패 (상태 코드: {r.status_code})"
+        for idx, ticker in enumerate(target_tickers):
+            sub_df = df_top_hist[df_top_hist['name'] == ticker]
+            if not sub_df.empty:
+                if len(target_tickers) <= 8:
+                    fig_trend.add_trace(go.Scatter(
+                        x=sub_df['report_date_str'], y=sub_df['weight'], mode='lines+markers+text', name=ticker,
+                        text=sub_df['weight'].apply(lambda x: f"{x:.2f}%"), textposition='top center',
+                        textfont=dict(size=10.5, color="#E5E7EB"), line=dict(width=2.5, color=distinct_colors[idx % len(distinct_colors)]),
+                        marker=dict(size=7), cliponaxis=False, hovertemplate=f"<b>{ticker}</b><br>공시일: %{{x}}<br>비중: %{{y:.2f}}%<extra></extra>"
+                    ))
+                else:
+                    fig_trend.add_trace(go.Scatter(
+                        x=sub_df['report_date_str'], y=sub_df['weight'], mode='lines+markers', name=ticker,
+                        line=dict(width=2, color=distinct_colors[idx % len(distinct_colors)]), marker=dict(size=6),
+                        cliponaxis=False, hovertemplate=f"<b>{ticker}</b><br>공시일: %{{x}}<br>비중: %{{y:.2f}}%<extra></extra>"
+                    ))
+
+        fig_trend.update_layout(
+            height=max(550, int(420 + len(target_tickers) * 12)),
+            title=dict(text=f"{selected_inst_name} 상위 {len(target_tickers)}개 종목 분기별(QoQ) 비중 추이 (최근 {selected_q_count}분기)", font=dict(size=15), y=0.98, x=0.01, xanchor='left'),
+            xaxis_title="공시 기준일 (분기)", yaxis=dict(title="포트폴리오 비중 (%)", range=[0, max(max_y_val * 1.18, 5.0)], automargin=True),
+            hovermode="x unified", margin=dict(l=20, r=220, t=50, b=40),
+            legend=dict(orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.02, font=dict(size=10.5))
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+    # TAB 3: 직전 분기 대비 매수/매도 변동 내역
+    with tab_v3:
+        if len(all_history_results) >= 2:
+            prev_df, prev_meta = all_history_results[1]
+            merged_qoq = pd.merge(
+                latest_df[['name', 'weight', 'value', 'shares']],
+                prev_df[['name', 'weight', 'value', 'shares']],
+                on='name', how='outer', suffixes=('_curr', '_prev')
+            ).fillna(0)
+            merged_qoq['weight_diff'] = merged_qoq['weight_curr'] - merged_qoq['weight_prev']
+            merged_qoq['shares_diff'] = merged_qoq['shares_curr'] - merged_qoq['shares_prev']
+            merged_qoq['value_diff'] = merged_qoq['value_curr'] - merged_qoq['value_prev']
+            merged_qoq['action'] = merged_qoq.apply(classify_qoq_action, axis=1)
+
+            st.markdown(f"**기준:** 최신 분기 `{latest_meta_info['report_date']}` vs 직전 분기 `{prev_meta['report_date']}`")
+            top_increased = merged_qoq[merged_qoq['weight_diff'] > 0].sort_values(by='weight_diff', ascending=False).head(5)
+            top_decreased = merged_qoq[merged_qoq['weight_diff'] < 0].sort_values(by='weight_diff', ascending=True).head(5)
+            qoq_bar_df = pd.concat([top_decreased, top_increased])
+
+            if not qoq_bar_df.empty:
+                fig_qoq = go.Figure(go.Bar(
+                    x=qoq_bar_df['weight_diff'], y=qoq_bar_df['name'], orientation='h',
+                    marker=dict(color=['#EF4444' if x < 0 else '#10B981' for x in qoq_bar_df['weight_diff']]),
+                    text=qoq_bar_df['weight_diff'].apply(lambda x: f"{x:+.2f}%p"), textposition='outside',
+                    hovertemplate="<b>%{y}</b><br>비중 증감: %{x:+.2f}%p<extra></extra>"
+                ))
+                fig_qoq.update_layout(height=max(380, len(qoq_bar_df) * 34 + 90), title="직전 분기 대비 비중 변동 상위 종목 (%p)", xaxis_title="비중 증감폭 (%p)", yaxis_title="", margin=dict(l=20, r=40, t=40, b=20))
+                st.plotly_chart(fig_qoq, use_container_width=True)
+
+            qoq_display = merged_qoq[merged_qoq['action'] != "⚪ 유지 (Unchanged)"].sort_values(by='weight_diff', key=abs, ascending=False).head(30)
+            qoq_table = qoq_display[['name', 'action', 'weight_curr', 'weight_diff', 'value_curr', 'shares_diff']].copy()
+            qoq_table.columns = ['종목명 (Issuer)', '투자 활동', '현재 비중', '비중 증감(%p)', '현재 평가액($)', '주식수 증감']
+            qoq_table['현재 비중'] = qoq_table['현재 비중'].map('{:.2f}%'.format)
+            qoq_table['비중 증감(%p)'] = qoq_table['비중 증감(%p)'].map('{:+.2f}%p'.format)
+            qoq_table['현재 평가액($)'] = qoq_table['현재 평가액($)'].map('${:,.0f}'.format)
+            qoq_table['주식수 증감'] = qoq_table['주식수 증감'].map('{:+,.0f}'.format)
+            st.dataframe(qoq_table, use_container_width=True, hide_index=True)
+        else:
+            st.info("비교 가능한 직전 분기 공시 데이터가 없습니다.")
+
+    # TAB 4: 상위 종목 비중 순위
+    with tab_v4:
+        st.markdown("#### ⚙️ 상위 종목 비중 순위 조회 조건 설정")
+        col_b1, col_b2 = st.columns([1, 1])
         
-        sub_data = r.json()
-        recent = sub_data.get('filings', {}).get('recent', {})
-        forms = recent.get('form', [])
-        
-        quarters_to_fetch = []
-        seen_dates = set()
-        
-        for idx, f in enumerate(forms):
-            if f in ['13F-HR', '13F-HR/A']:
-                r_date = recent['reportDate'][idx]
-                if r_date not in seen_dates:
-                    seen_dates.add(r_date)
-                    quarters_to_fetch.append({
-                        "accession_number": recent['accessionNumber'][idx],
-                        "report_date": r_date,
-                        "filing_date": recent['filingDate'][idx]
-                    })
-                if len(quarters_to_fetch) >= max_quarters:
-                    break
+        with col_b1:
+            available_dates_bar = [q_meta['report_date'] for _, q_meta in all_history_results]
+            selected_bar_date = st.selectbox(
+                "기준 공시일(분기) 선택",
+                options=available_dates_bar,
+                index=0,
+                key="barchart_date_select"
+            )
+            
+        selected_bar_df = None
+        for df_q, q_meta in all_history_results:
+            if q_meta['report_date'] == selected_bar_date:
+                selected_bar_df = df_q.sort_values(by='weight', ascending=False).reset_index(drop=True)
+                break
+                
+        if selected_bar_df is not None:
+            with col_b2:
+                bar_options = [10, 20, 30, 40, 50, 70, 100]
+                valid_bar_options = [n for n in bar_options if n <= len(selected_bar_df)] or [min(10, len(selected_bar_df))]
+                
+                bar_n = st.selectbox(
+                    "바 차트 표시 종목 수 선택",
+                    options=valid_bar_options,
+                    index=min(0, len(valid_bar_options)-1),
+                    format_func=lambda x: f"상위 Top {x}개 종목",
+                    key="barchart_n_select"
+                )
+                
+            df_bar_top = selected_bar_df.head(bar_n).sort_values(by='weight', ascending=True).copy()
+            
+            fig_bar = go.Figure(go.Bar(
+                x=df_bar_top['weight'], y=df_bar_top['name'], orientation='h',
+                marker=dict(color='#0066FF', opacity=0.85), text=df_bar_top['weight'].apply(lambda x: f"{x:.2f}%"),
+                textposition='outside', hovertemplate="<b>%{y}</b><br>포트폴리오 비중: %{x:.2f}%<extra></extra>"
+            ))
+            fig_bar.update_layout(
+                height=max(380, bar_n * 26 + 100),
+                title=f"{selected_inst_name} 상위 Top {bar_n} 보유 비중 (기준일: {selected_bar_date})",
+                xaxis_title="포트폴리오 비중 (%)", yaxis_title="",
+                margin=dict(l=20, r=40, t=40, b=20)
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-        if not quarters_to_fetch:
-            return None, "13F 공시 이력을 찾을 수 없습니다."
+    st.divider()
 
-        parsed_dfs = []
-        for q in quarters_to_fetch:
-            acc_clean = q['accession_number'].replace('-', '')
-            df_q = parse_single_13f(cik, acc_clean, q['accession_number'], q['report_date'], user_agent)
-            if df_q is not None and not df_q.empty:
-                parsed_dfs.append((df_q, q))
-
-        if not parsed_dfs:
-            return None, "13F 데이터를 파싱하지 못했습니다."
-
-        return parsed_dfs, None
-    except Exception as e:
-        return None, f"오류 발생: {str(e)}"
-
-def classify_qoq_action(row):
-    if row['shares_prev'] == 0 and row['shares_curr'] > 0:
-        return "🟢 신규 매수 (New Buy)"
-    elif row['shares_curr'] == 0 and row['shares_prev'] > 0:
-        return "🔴 전량 매도 (Sold Out)"
-    elif row['shares_diff'] > 0:
-        return "🔵 비중 확대 (Increased)"
-    elif row['shares_diff'] < 0:
-        return "🟡 비중 축소 (Decreased)"
-    else:
-        return "⚪ 유지 (Unchanged)"
+    # 3. 전체 보유 종목 상세 표
+    st.subheader(f"📋 전체 보유 지분 상세 목록 (기준일: {meta['report_date']})")
+    df_display = latest_df[['name', 'weight', 'value', 'shares', 'class', 'cusip']].copy()
+    df_display.columns = ['종목명 (Issuer)', '비중 (%)', '평가액 ($)', '보유 주식수', '주식 종류', 'CUSIP']
+    df_display['비중 (%)'] = df_display['비중 (%)'].map('{:.2f}%'.format)
+    df_display['평가액 ($)'] = df_display['평가액 ($)'].map('${:,.0f}'.format)
+    df_display['보유 주식수'] = df_display['보유 주식수'].map('{:,.0f}'.format)
+    st.dataframe(df_display, use_container_width=True, hide_index=True)
