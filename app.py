@@ -141,8 +141,8 @@ menu_selection = st.sidebar.radio(
         "🔄 섹터 & 자산군 로테이션",
         "📑 기관 13F 포트폴리오 분석", 
         "🎯 기관 13F Money 교집합",
-        "🏛️ 글로벌 스마트머니 (COT)",
-        "🇰🇷 국내 파생 & 외국인 (KRX)",
+        "🏛️ 글로벌 투기세력 (COT)",
+        "🇰🇷 국내 파생 & 투기세력 (KRX)",
         "📡 외국인/기관 수급 레이더 (코스피)",
         "🤖 AI API 연결 테스트"
     ],
@@ -194,9 +194,9 @@ elif menu_selection == "📑 기관 13F 포트폴리오 분석":
     render_sec_view()
 elif menu_selection == "🎯 기관 13F Money 교집합":
     render_consensus_view()
-elif menu_selection == "🏛️ 글로벌 스마트머니 (COT)":  
+elif menu_selection == "🏛️ 글로벌 투기세력 (COT)":  
     render_cot_view()
-elif menu_selection == "🇰🇷 국내 파생 & 외국인 (KRX)":
+elif menu_selection == "🇰🇷 국내 파생 & 투기세력 (KRX)":
     render_krx_cot_view()
 elif menu_selection == "📡 외국인/기관 수급 레이더 (코스피)":
     render_radar_view()
