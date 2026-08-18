@@ -66,12 +66,10 @@ def clean_markdown_output(text: str) -> str:
     while i < len(lines):
         line = lines[i]
         fixed_lines.append(line)
-        # 2열 테이블 헤더 감지 (| 구분 | 내용 |)
         if re.match(r'^\s*\|\s*구분\s*\|\s*내용\s*\|\s*$', line) and i + 1 < len(lines):
             next_line = lines[i + 1]
             if not re.match(r'^\s*\|(?:\s*:?-+:?\s*\|)+\s*$', next_line):
                 fixed_lines.append('| :--- | :--- |')
-        # 4열 테이블 헤더 감지 (| 시나리오 | 발생 조건 | ...)
         elif re.match(r'^\s*\|\s*시나리오\s*\|\s*발생\s*조건\s*\|', line) and i + 1 < len(lines):
             next_line = lines[i + 1]
             if not re.match(r'^\s*\|(?:\s*:?-+:?\s*\|)+\s*$', next_line):
@@ -214,9 +212,6 @@ def test_nvidia_nemotron(api_key: str, prompt: str, system_prompt: str = None) -
 
 
 def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prompt: str = None) -> dict:
-    """
-    Cloudflare DeepSeek-R1 (항상 영어로 생성 후 NVIDIA GPT-OSS 또는 CF Llama로 한국어 번역)
-    """
     model = "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
     if not account_id or not api_token:
         return {"status": False, "provider": "Cloudflare AI (DeepSeek-R1)", "model": model, "latency_ms": 0, "response": "Account ID 또는 API Token 누락"}
@@ -224,7 +219,6 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prom
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     
-    # DeepSeek 모델에게 영어 생성 및 엄격한 마크다운 테이블 출력 지시
     english_system = (
         "You are an elite quantitative derivatives analyst and macro strategist. "
         "Analyze the provided KOSPI 200 futures and options data. "
@@ -255,7 +249,6 @@ def test_cloudflare_ai(account_id: str, api_token: str, prompt: str, system_prom
                 if not cleaned:
                     cleaned = raw.strip()
                 
-                # DeepSeek 영문 응답을 한국어로 100% 번역
                 nv_key = get_secret("ai.nvidia_api_key", "")
                 translated_ok = False
                 translation_info = ""
@@ -297,7 +290,7 @@ def test_nvidia_gpt_oss(api_key: str, prompt: str, system_prompt: str = None) ->
 
 def test_cerebras(api_key: str, prompt: str, system_prompt: str = None) -> dict:
     sys_prompt = system_prompt or INVESTMENT_AGENT_PROMPT
-    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "gpt-oss-120b", prompt, system_prompt=sys_prompt, timeout=60)
+    return _call_openai_format("Cerebras Cloud", "https://api.cerebras.ai/v1/chat/completions", api_key, "llama-3.3-70b", prompt, system_prompt=sys_prompt, timeout=60)
 
 
 # ==========================================
@@ -309,14 +302,12 @@ def generate_ai_briefing_with_failover(prompt: str, system_prompt: str = None) -
     cf_token = get_secret("ai.cloudflare_api_token", "")
     ce_key = get_secret("ai.cerebras_api_key", "")
 
-    # 1순위: NVIDIA Nemotron-3
     if nv_key:
         res = test_nvidia_nemotron(nv_key, prompt, system_prompt)
         if res["status"]:
             res["pipeline_step"] = "1순위 (NVIDIA Nemotron-3) 정상 응답"
             return res
 
-    # 2순위: Cloudflare DeepSeek (영어 생성 후 2중 번역 우회)
     if cf_id and cf_token:
         res = test_cloudflare_ai(cf_id, cf_token, prompt, system_prompt)
         if res["status"]:
@@ -324,14 +315,12 @@ def generate_ai_briefing_with_failover(prompt: str, system_prompt: str = None) -
             res["pipeline_step"] = f"2순위 (Cloudflare DeepSeek-R1) [{trans_msg}]"
             return res
 
-    # 3순위: NVIDIA GPT-OSS-20B
     if nv_key:
         res = test_nvidia_gpt_oss(nv_key, prompt, system_prompt)
         if res["status"]:
             res["pipeline_step"] = "3순위 (NVIDIA GPT-OSS-20B) Failover 성공"
             return res
 
-    # 4순위: Cerebras Cloud
     if ce_key:
         res = test_cerebras(ce_key, prompt, system_prompt)
         if res["status"]:
@@ -358,9 +347,9 @@ def call_selected_ai_engine(engine_name: str, prompt: str, system_prompt: str = 
         return generate_ai_briefing_with_failover(prompt, system_prompt)
     elif "Nemotron" in engine_name:
         return test_nvidia_nemotron(sec_nv_key, prompt, system_prompt)
-    elif "Cloudflare" in engine_name:
+    elif "Cloudflare" in engine_name or "DeepSeek" in engine_name:
         return test_cloudflare_ai(sec_cf_id, sec_cf_token, prompt, system_prompt)
-    elif "GPT-OSS-20B" in engine_name:
+    elif "GPT-OSS" in engine_name:
         return test_nvidia_gpt_oss(sec_nv_key, prompt, system_prompt)
     elif "Cerebras" in engine_name:
         return test_cerebras(sec_ce_key, prompt, system_prompt)
@@ -369,21 +358,25 @@ def call_selected_ai_engine(engine_name: str, prompt: str, system_prompt: str = 
 
 
 def ask_investment_agent(prompt: str) -> str:
+    """일반 투자 에이전트 호출 래퍼 함수"""
     res = generate_ai_briefing_with_failover(prompt=prompt, system_prompt=INVESTMENT_AGENT_PROMPT)
     if isinstance(res, dict):
         return clean_markdown_output(res.get("response", "AI 응답을 생성하지 못했습니다."))
     return clean_markdown_output(str(res))
 
 
-def ask_krx_cot_agent(prompt: str) -> dict:
-    res = generate_ai_briefing_with_failover(prompt=prompt, system_prompt=KRX_DERIVATIVES_PROMPT)
+def ask_krx_cot_agent(prompt: str, engine_name: str = "자동 탐색") -> dict:
+    """국내 파생상품 & COT 전용 정밀 에이전트 호출 래퍼 함수 (엔진 직접 선택 지원)"""
+    res = call_selected_ai_engine(engine_name, prompt=prompt, system_prompt=KRX_DERIVATIVES_PROMPT)
     if isinstance(res, dict):
         res["response"] = clean_markdown_output(res.get("response", "AI 응답을 생성하지 못했습니다."))
+        if "pipeline_step" not in res:
+            res["pipeline_step"] = f"단일 엔진 강제 호출 ({engine_name})"
         return res
     return {
         "status": True,
-        "provider": "Unknown",
+        "provider": engine_name,
         "model": "Unknown",
-        "pipeline_step": "단일 엔진 응답",
+        "pipeline_step": f"단일 엔진 응답 ({engine_name})",
         "response": clean_markdown_output(str(res))
     }
