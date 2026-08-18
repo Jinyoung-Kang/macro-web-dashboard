@@ -1,4 +1,8 @@
-# services/consensus_service.py
+"""
+services/consensus_service.py
+기관 13F Money 교집합 (Consensus) 분석 퀀트 엔진
+다수 기관의 분기별 포트폴리오를 대조하여 공통 보유, 동시 순매수/순매도 집중 종목 산출
+"""
 import pandas as pd
 from services.sec_service import fetch_sec_13f_multi_quarters, classify_qoq_action
 
@@ -13,6 +17,7 @@ def fetch_all_selected_histories(selected_institutions: dict, max_quarters: int 
             inst_histories[inst_name] = history_results
     return inst_histories
 
+
 def get_common_available_dates(inst_histories: dict):
     """
     수집된 기관 데이터에서 존재하는 모든 공시 기준일(report_date) 목록을 최신순으로 추출합니다.
@@ -22,6 +27,7 @@ def get_common_available_dates(inst_histories: dict):
         for _, q_meta in history:
             all_dates.add(q_meta['report_date'])
     return sorted(list(all_dates), reverse=True)
+
 
 def calculate_consensus_by_date(inst_histories: dict, target_report_date: str):
     """
