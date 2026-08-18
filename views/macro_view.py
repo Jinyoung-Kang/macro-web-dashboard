@@ -77,7 +77,7 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
         vix_hist, move_hist, hy_df, cp_spread_df, stlfsi_df, now_str_kst
     )
 
-    header_left, header_right = st.columns([3, 1])
+    header_left, header_right = st.columns([2.8, 1.2])
     with header_left:
         st.title("📊 Global Macro Dashboard")
         st.caption(f"최근 데이터 갱신 시각: {now_str_kst} (KST) | 갱신 주기: {refresh_interval}초")
@@ -85,9 +85,40 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
     with header_right:
         st.write("")
         with st.popover("📋 텍스트 브리핑 보기 / 복사", use_container_width=True):
-            st.markdown("**현재 시세 텍스트 종합 브리핑**")
+            st.markdown("#### 📝 현재 시세 텍스트 종합 브리핑")
             st.caption("우측 상단 복사 아이콘(📋)을 눌러 즉시 복사하세요.")
             st.code(report_text, language="text")
+            
+            st.divider()
+            
+            # [신규 추가] 5대 지표 취합 기반 AI 텍스트 브리핑 생성기
+            st.markdown("#### 🤖 AI로 텍스트 브리핑 보기 / 복사")
+            st.caption("대시보드 내 **5대 핵심 데이터**(매크로, 유동성, 로테이션, 글로벌 COT, 국내 파생)를 모두 취합하여 지정한 AI API로 브리핑을 생성합니다.")
+            
+            engine_options = [
+                "자동 탐색 (Failover 무중단)",
+                "NVIDIA NIM (Nemotron-3-Super)",
+                "Cloudflare (DeepSeek-R1 번역)",
+                "NVIDIA NIM (GPT-OSS-20B)",
+                "Cerebras Cloud (Llama-3.3)"
+            ]
+            selected_macro_ai = st.selectbox("AI 분석 엔진 선택", options=engine_options, index=0, key="popover_macro_ai_engine")
+            
+            if st.button("🧠 AI 종합 브리핑 생성", key="btn_macro_ai_popover", use_container_width=True):
+                with st.spinner(f"[{selected_macro_ai}] 5대 핵심 데이터를 수집 및 분석 중입니다..."):
+                    try:
+                        from views.ai_report_view import build_comprehensive_context
+                        from services.ai_service import call_selected_ai_engine
+                        from services.prompts import COMPREHENSIVE_REPORT_PROMPT
+                        
+                        context_data = build_comprehensive_context()
+                        res = call_selected_ai_engine(selected_macro_ai, prompt=context_data, system_prompt=COMPREHENSIVE_REPORT_PROMPT)
+                        
+                        ai_text = res.get("response", "데이터 처리에 실패했습니다.")
+                        st.markdown(ai_text)
+                        st.code(ai_text, language="markdown")
+                    except Exception as e:
+                        st.error(f"AI 브리핑 생성 실패: {e}")
 
     st.divider()
 
