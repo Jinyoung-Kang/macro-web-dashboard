@@ -263,13 +263,25 @@ def render_krx_cot_view():
         )
 
     # ==========================================================================
-    # 4. AI 파생 수급 & 스마트머니 종합 진단 (마크다운 표 완벽 표출)
+    # 4. AI 파생 수급 & 스마트머니 종합 진단 (엔진 선택 UI 반영)
     # ==========================================================================
     st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
     st.markdown("#### 🤖 AI 파생 수급 & 스마트머니 종합 진단")
 
+    engine_options = [
+        "자동 탐색 (Failover 무중단)",
+        "NVIDIA NIM (Nemotron-3-Super)",
+        "Cloudflare (DeepSeek-R1 번역)",
+        "NVIDIA NIM (GPT-OSS-20B)",
+        "Cerebras Cloud (Llama-3.3)"
+    ]
+    
+    col_ai1, col_ai2 = st.columns([1, 2])
+    with col_ai1:
+        selected_engine = st.selectbox("실행할 AI 분석 엔진 직접 선택", options=engine_options, index=0)
+
     if st.button("🧠 현재 파생 수급 기반 투자 가설 & 심층 결론 리포트 생성", use_container_width=True):
-        with st.spinner("파생 데이터 분석 및 다단계 AI 엔진(DeepSeek + 번역) 파이프라인을 실행하고 있습니다..."):
+        with st.spinner(f"[{selected_engine}] 파이프라인을 통해 정밀 마크다운 리포트를 렌더링하고 있습니다..."):
             prompt = f"""
             [KOSPI 200 Derivatives Market Data]
             - Date: {data_date_str} (Analysis Time: {now_str})
@@ -283,7 +295,8 @@ def render_krx_cot_view():
 
             Analyze the above data according to the KRX_DERIVATIVES_PROMPT rules and output the full 4-part structured report with Markdown tables and action playbook.
             """
-            ai_res = ask_krx_cot_agent(prompt)
+            
+            ai_res = ask_krx_cot_agent(prompt, selected_engine)
             
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
             with st.container(border=True):
