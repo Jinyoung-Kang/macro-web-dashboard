@@ -1,4 +1,8 @@
-# views/consensus_view.py
+"""
+views/consensus_view.py
+🎯 기관 13F Money 교집합 분석 (Consensus Holdings)
+선택한 특정 분기(시점)에서 주요 글로벌 기관들이 동시에 보유하거나 집중 매수/매도한 공통 종목 발굴
+"""
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -25,7 +29,7 @@ def render_consensus_view():
     selected_insts = st.multiselect(
         "비교할 기관을 선택하세요 (최소 2개 이상)",
         options=inst_names,
-        default=valid_defaults
+        default=valid_defaults if valid_defaults else inst_names[:2]
     )
 
     if len(selected_insts) < 2:
