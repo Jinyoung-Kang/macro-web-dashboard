@@ -146,7 +146,7 @@ menu_selection = st.sidebar.radio(
         "📡 외국인/기관 수급 레이더 (코스피)",
         "🤖 AI API 연결 테스트"
     ],
-    index=6,  # 국내 파생상품 수급 & COT를 기본 탭으로 활성화
+    index=0,  # 국내 파생상품 수급 & COT를 기본 탭으로 활성화
     label_visibility="collapsed"
 )
 
