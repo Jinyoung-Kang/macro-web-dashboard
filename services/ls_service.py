@@ -1,25 +1,58 @@
-# services/ls_service.py
-import streamlit as st
+"""
+services/ls_service.py
+LS증권 OPEN API 통신 엔진 및 토큰 관리 모듈
+"""
+import os
+import time
+import logging
 import requests
-import json
+import streamlit as st
 
-BASE_URL = "https://openapi.ls-sec.co.kr:8080"
+logger = logging.getLogger(__name__)
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_ls_token():
-    """
-    LS증권 OPEN API OAuth 2.0 접근 토큰(Access Token)을 발급받습니다.
-    """
-    app_key = st.secrets.get("ls_api", {}).get("app_key")
-    app_secret = st.secrets.get("ls_api", {}).get("app_secret")
+def get_secret(key_path: str, default: str = "") -> str:
+    """Streamlit Secrets (중첩 섹션 및 단일 키 지원) 및 환경변수 안전 로드"""
+    try:
+        if hasattr(st, "secrets") and st.secrets:
+            keys = key_path.split(".")
+            val = st.secrets
+            found = True
+            for k in keys:
+                if hasattr(val, "get") and val.get(k) is not None:
+                    val = val.get(k)
+                elif hasattr(val, "__getitem__") and k in val:
+                    val = val[k]
+                else:
+                    found = False
+                    break
+            if found and val is not None:
+                return str(val).strip()
 
+            leaf = keys[-1]
+            if hasattr(st.secrets, "get") and st.secrets.get(leaf) is not None:
+                return str(st.secrets.get(leaf)).strip()
+            if hasattr(st.secrets, "get") and st.secrets.get(leaf.upper()) is not None:
+                return str(st.secrets.get(leaf.upper())).strip()
+    except Exception:
+        pass
+    return os.environ.get(key_path, os.environ.get(key_path.replace(".", "_").upper(), default))
+
+
+LS_APP_KEY = get_secret("ls.app_key", get_secret("LS_APP_KEY", ""))
+LS_APP_SECRET = get_secret("ls.app_secret", get_secret("LS_APP_SECRET", ""))
+LS_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
+
+@st.cache_data(ttl=18000, show_spinner=False)
+def get_ls_access_token() -> str:
+    """LS증권 OAuth 2.0 Access Token 발급 및 캐싱"""
+    app_key = get_secret("ls.app_key", get_secret("LS_APP_KEY", ""))
+    app_secret = get_secret("ls.app_secret", get_secret("LS_APP_SECRET", ""))
+    
     if not app_key or not app_secret:
-        return None, "secrets.toml에 [ls_api] app_key 또는 app_secret이 설정되지 않았습니다."
+        return ""
 
-    url = f"{BASE_URL}/oauth2/token"
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
+    url = f"{LS_BASE_URL}/oauth2/token"
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
     payload = {
         "grant_type": "client_credentials",
         "appkey": app_key,
@@ -28,63 +61,37 @@ def get_ls_token():
     }
 
     try:
-        resp = requests.post(url, headers=headers, data=payload, timeout=10)
-        if resp.status_code == 200:
-            token_data = resp.json()
-            access_token = token_data.get("access_token")
-            return access_token, None
-        else:
-            return None, f"토큰 발급 실패 (HTTP {resp.status_code}): {resp.text}"
+        res = requests.post(url, headers=headers, data=payload, timeout=8)
+        if res.status_code == 200:
+            data = res.json()
+            return data.get("access_token", "")
     except Exception as e:
-        return None, f"API 통신 오류: {str(e)}"
+        logger.warning(f"LS API Token 발급 실패: {e}")
+    return ""
 
-def fetch_stock_quote(shcode: str = "005930"):
-    """
-    국내 주식 현재가 시세(TR: t1102)를 실시간 조회합니다.
-    """
-    token, err = get_ls_token()
-    if err or not token:
-        return None, err
 
-    url = f"{BASE_URL}/stock/market-data"
+def call_ls_api(tr_cd: str, tr_url: str, body_params: dict) -> dict:
+    """LS증권 TR 실행 공통 함수"""
+    token = get_ls_access_token()
+    app_key = get_secret("ls.app_key", get_secret("LS_APP_KEY", ""))
+    
+    if not token or not app_key:
+        return {}
+
+    url = f"{LS_BASE_URL}{tr_url}"
     headers = {
         "Content-Type": "application/json; charset=utf-8",
         "authorization": f"Bearer {token}",
-        "tr_cd": "t1102",
+        "tr_cd": tr_cd,
         "tr_cont": "N",
-        "tr_cont_key": ""
-    }
-    payload = {
-        "t1102InBlock": {
-            "shcode": shcode.strip()
-        }
+        "tr_cont_key": "",
+        "mac_address": ""
     }
 
     try:
-        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-        if resp.status_code == 200:
-            result = resp.json()
-            out_block = result.get("t1102OutBlock", {})
-            if not out_block or not out_block.get("hname"):
-                return None, f"종목 정보를 찾을 수 없습니다. (응답: {result})"
-            
-            # 하락/상승 부호 완벽 처리
-            raw_change = float(out_block.get("change", 0))
-            raw_diff = float(out_block.get("diff", 0))
-            sign = str(out_block.get("sign", "3"))
-
-            if sign in ["4", "5"]:  # 하락/하한
-                out_block['change'] = -abs(raw_change)
-                out_block['diff'] = -abs(raw_diff)
-            elif sign in ["1", "2"]:  # 상승/상한
-                out_block['change'] = abs(raw_change)
-                out_block['diff'] = abs(raw_diff)
-            else:
-                out_block['change'] = 0.0
-                out_block['diff'] = 0.0
-
-            return out_block, None
-        else:
-            return None, f"시세 조회 실패 (HTTP {resp.status_code}): {resp.text}"
+        res = requests.post(url, headers=headers, json=body_params, timeout=10)
+        if res.status_code == 200:
+            return res.json()
     except Exception as e:
-        return None, f"시세 통신 오류: {str(e)}"
+        logger.warning(f"LS TR ({tr_cd}) 호출 실패: {e}")
+    return {}
