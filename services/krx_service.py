@@ -5,6 +5,7 @@ KRX OPEN API를 활용한 국내 파생상품(KOSPI 200 선물) 시세, 미결�
 """
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 import streamlit as st
@@ -37,7 +38,6 @@ def fetch_krx_derivatives_daily(date_str: str) -> pd.DataFrame:
         response = requests.get(url, headers=headers, params=params, timeout=8)
         if response.status_code == 200:
             data = response.json()
-            # KRX 응답 구조: {'OutBlock_1': [...]} 또는 JSON 배열
             if isinstance(data, dict):
                 for key in ["OutBlock_1", "output", "block1", "items"]:
                     if key in data and isinstance(data[key], list) and len(data[key]) > 0:
@@ -60,7 +60,7 @@ def get_krx_futures_history(days: int = 40) -> pd.DataFrame:
     """
     최근 N영업일 동안의 KOSPI 200 선물 최근월물 종가, 거래량, 미결제약정 시계열을 수집.
     """
-    today = datetime.today()
+    today = datetime.now(ZoneInfo("Asia/Seoul"))
     date_list = []
     
     curr = today
@@ -103,10 +103,10 @@ def get_krx_futures_history(days: int = 40) -> pd.DataFrame:
                         "Open_Interest": oi_val,
                         "Theory_Price": theo_val,
                         "Market_Basis": basis_val,
-                        "Contract_Name": str(row.get(name_col, "KOSPI 200 Futures"))
+                        "Contract_Name": str(row.get(name_col, "KOSPI 200 선물"))
                     })
 
-    # KRX 응답 부재 시 Fallback
+    # KRX 응답 부재 시 Fallback (KODEX 200 기반 시뮬레이션)
     if len(records) < 5:
         return _generate_fallback_derivatives_data(days)
 
@@ -122,11 +122,11 @@ def get_krx_futures_history(days: int = 40) -> pd.DataFrame:
         if p_up and oi_up:
             return "신규 롱 진입 (Bullish Expansion)"
         elif p_up and not oi_up:
-            return "숏 커버링 (Short Squeeze / Rebound)"
+            return "숏 커버링 (Short Squeeze)"
         elif not p_up and oi_up:
             return "신규 숏 진입 (Bearish Expansion)"
         else:
-            return "롱 청산 (Long Liquidation / Flush)"
+            return "롱 청산 (Long Liquidation)"
 
     df_hist["Market_Phase"] = df_hist.apply(diagnose_phase, axis=1)
     
@@ -162,11 +162,11 @@ def _generate_fallback_derivatives_data(days: int) -> pd.DataFrame:
                 if p_up and oi_up:
                     return "신규 롱 진입 (Bullish Expansion)"
                 elif p_up and not oi_up:
-                    return "숏 커버링 (Short Squeeze / Rebound)"
+                    return "숏 커버링 (Short Squeeze)"
                 elif not p_up and oi_up:
                     return "신규 숏 진입 (Bearish Expansion)"
                 else:
-                    return "롱 청산 (Long Liquidation / Flush)"
+                    return "롱 청산 (Long Liquidation)"
 
             df["Market_Phase"] = df.apply(diagnose_phase, axis=1)
             min_oi = df["Open_Interest"].min()
@@ -179,7 +179,7 @@ def _generate_fallback_derivatives_data(days: int) -> pd.DataFrame:
 
 
 # ==============================================================================
-# 3. 주체별(외인/기관/개인) 선물 수급 요약
+# 3. 주체별(외인/기관/개인) 선물 수급 요약 (텍스트 축약 및 최적화)
 # ==============================================================================
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_krx_investor_derivatives_summary() -> pd.DataFrame:
@@ -189,16 +189,19 @@ def get_krx_investor_derivatives_summary() -> pd.DataFrame:
     net_5d = [14200, -8900, -3100, -2200]
     net_20d = [38500, -24100, -6800, -7600]
     
+    # 가로 스크롤 방지를 위해 핵심 단어로 정제
+    short_stance = [
+        "🟢 강한 상방(Long)",
+        "🔴 매도/차익 헤지",
+        "⚪ 중립/분할 헤지",
+        "🔵 하방(Short) 베팅"
+    ]
+    
     df = pd.DataFrame({
         "투자 주체": categories,
-        "당일 순매수 (계약)": net_today,
-        "5일 누적 순매수 (계약)": net_5d,
-        "20일 누적 순매수 (계약)": net_20d,
-        "포지션 성향": [
-            "강한 상방(Long) 베팅 주도",
-            "프로그램 매도 및 헤지 출회",
-            "중립적 관망 및 분할 헤지",
-            "하방(Short) 베팅 / 역추세"
-        ]
+        "당일 순매수": net_today,
+        "5일 누적": net_5d,
+        "20일 누적": net_20d,
+        "포지션 성향": short_stance
     })
     return df
