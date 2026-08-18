@@ -1,12 +1,11 @@
 """
 services/sec_service.py
 SEC EDGAR 13F-HR 공시 데이터 수집 및 기관 포트폴리오 분석 엔진
-(강력한 Session + Retry 기반 SEC 통신 타임아웃 방어 엔진 탑재)
+(강력한 Session 기반 통신 방어 및 네임스페이스 무시 무적 XML 파서 탑재)
 """
 import logging
 import re
 import time
-import xml.etree.ElementTree as ET
 import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter
@@ -47,7 +46,7 @@ def get_sec_session() -> requests.Session:
 
 
 # ==============================================================================
-# 2. 통합 13F 분기 데이터 크롤러 (실제 달러 단위 자동 판별)
+# 2. 통합 13F 분기 데이터 크롤러 (실제 달러 단위 판별 및 무적 XML 파서 적용)
 # ==============================================================================
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
@@ -64,7 +63,7 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
         res = session.get(base_url, timeout=30)
         res.raise_for_status()
     except Exception as e:
-        return None, f"SEC EDGAR 연결 실패 (서버 점검 또는 지연): {str(e)}"
+        return None, f"SEC EDGAR 연결 실패 (서버 점검 또는 통신 지연): {str(e)}\n우측 상단의 [데이터 새로고침] 버튼을 눌러주세요."
 
     soup = BeautifulSoup(res.text, "html.parser")
     tables = soup.find_all("table", class_="tableFile2")
@@ -78,6 +77,7 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
         cols = row.find_all("td")
         if len(cols) >= 4:
             doc_type = cols[0].text.strip()
+            # 13F-HR 공시 문서만 추출 (수정 공시 제외)
             if doc_type == "13F-HR":
                 a_tag = cols[1].find("a", href=True)
                 filing_date = cols[3].text.strip()
@@ -94,7 +94,7 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
     all_results = []
     for filing_date, doc_url in history_links:
         try:
-            time.sleep(0.15) # SEC API 초당 호출 횟수 제한(Rate Limit) 준수
+            time.sleep(0.3) # SEC API 초당 호출 횟수 제한(Rate Limit)을 안전하게 우회
             doc_res = session.get(doc_url, timeout=30)
             doc_res.raise_for_status()
         except Exception as e:
@@ -115,6 +115,7 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
                         if "information table" in doc_text or "infotable" in doc_text:
                             xml_url = "https://www.sec.gov" + fname['href']
                             break
+                        # 우선순위가 아니더라도 xml 파일이면 확보
                         if not xml_url:
                             xml_url = "https://www.sec.gov" + fname['href']
 
@@ -122,50 +123,65 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
             continue
 
         try:
-            time.sleep(0.15)
+            time.sleep(0.3)
             xml_res = session.get(xml_url, timeout=30)
             xml_res.raise_for_status()
         except Exception as e:
             logger.warning(f"13F XML 파싱 타임아웃 ({filing_date}): {e}")
             continue
 
-        root = ET.fromstring(xml_res.content)
-        ns = {'n': root.tag.split('}')[0].strip('{')} if '}' in root.tag else {'n': ''}
-
-        data = []
-        for info in root.findall('n:infoTable', ns):
-            name = info.find('n:nameOfIssuer', ns).text if info.find('n:nameOfIssuer', ns) is not None else ''
-            title_class = info.find('n:titleOfClass', ns).text if info.find('n:titleOfClass', ns) is not None else ''
-            cusip = info.find('n:cusip', ns).text if info.find('n:cusip', ns) is not None else ''
-            val_text = info.find('n:value', ns).text if info.find('n:value', ns) is not None else '0'
+        # [핵심 수정]: XML Namespace 변형 오류를 원천 차단하기 위해 BeautifulSoup "xml" 파서 사용
+        try:
+            xml_soup = BeautifulSoup(xml_res.content, "xml")
+            info_tables = xml_soup.find_all(re.compile("infoTable", re.IGNORECASE))
             
-            shrs_info = info.find('n:shrsOrPrnAmt', ns)
-            shares = 0
-            if shrs_info is not None:
-                shamt = shrs_info.find('n:sshPrnamt', ns)
-                if shamt is not None:
-                    shares = float(shamt.text)
-            
-            # 2023년 이후 SEC 13F XML의 Value는 '실제 달러(Exact USD)' 단위
-            try:
-                val = float(val_text)
-            except ValueError:
-                val = 0.0
+            data = []
+            for info in info_tables:
+                # 태그명 대소문자 및 네임스페이스 무시하고 검색
+                name_tag = info.find(re.compile("nameOfIssuer", re.IGNORECASE))
+                class_tag = info.find(re.compile("titleOfClass", re.IGNORECASE))
+                cusip_tag = info.find(re.compile("cusip", re.IGNORECASE))
+                val_tag = info.find(re.compile("value", re.IGNORECASE))
+                
+                name = name_tag.text.strip() if name_tag else ""
+                title_class = class_tag.text.strip() if class_tag else ""
+                cusip = cusip_tag.text.strip() if cusip_tag else ""
+                val_text = val_tag.text.strip() if val_tag else "0"
+                
+                shrs_info = info.find(re.compile("shrsOrPrnAmt", re.IGNORECASE))
+                shares = 0.0
+                if shrs_info:
+                    shamt_tag = shrs_info.find(re.compile("sshPrnamt", re.IGNORECASE))
+                    if shamt_tag:
+                        try:
+                            shares = float(shamt_tag.text.strip())
+                        except:
+                            pass
+                
+                # 2023년 이후 SEC 13F XML의 Value는 '실제 달러(Exact USD)' 단위
+                try:
+                    val = float(val_text)
+                except ValueError:
+                    val = 0.0
 
-            data.append({
-                'name': name,
-                'class': title_class,
-                'cusip': cusip,
-                'value': val,
-                'shares': shares
-            })
+                if name and val > 0:
+                    data.append({
+                        'name': name.upper(),
+                        'class': title_class,
+                        'cusip': cusip,
+                        'value': val,
+                        'shares': shares
+                    })
+        except Exception as e:
+            logger.warning(f"BeautifulSoup XML 파싱 에러 ({filing_date}): {e}")
+            continue
 
         if not data:
             continue
 
         df = pd.DataFrame(data)
         
-        # [스마트 스케일러] 2023년 이전 공시 파일이거나 AUM이 비정상적으로 $100M 미만이면 '천 달러 단위'로 간주하고 1000 곱하기 복원
+        # [스마트 스케일러] 2023년 이전 공시 파일이거나 AUM이 비정상적으로 $100M 미만이면 '천 달러 단위' 축약본으로 간주하고 1000 곱하기 복원
         if df['value'].sum() > 0 and df['value'].sum() < 100_000_000:
             df['value'] = df['value'] * 1000.0
             
@@ -194,7 +210,7 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
         all_results.append((df, meta_info))
 
     if not all_results:
-        return None, "성공적으로 추출된 분기 데이터가 없습니다."
+        return None, "성공적으로 추출된 분기 데이터가 없습니다. (기관의 공시 포맷이 특이하거나 문서가 비어있을 수 있습니다.)"
 
     return all_results, None
 
@@ -241,7 +257,7 @@ def load_all_institutions_data():
                 'df': df,
                 'meta': meta
             }
-        time.sleep(0.15) # SEC API 밴 방지 (Rate Limit)
+        time.sleep(0.2) # SEC API 밴 방지 (Rate Limit)
     return data
 
 
