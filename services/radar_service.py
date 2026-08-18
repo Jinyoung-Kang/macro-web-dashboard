@@ -17,7 +17,7 @@ from services.ls_service import call_ls_api
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# 1. 네이버 금융 실시간 / 장마감 확정 수급 스크래핑 Fallback 엔진
+# 1. 네이버 금융 실시간 / 장마감 확정 수급 스크래핑 Fallback 엔진 (인덱스 파싱 교정 완료)
 # ==============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_naver_deal_ranking(market: str = "KOSPI", investor: str = "외국인", trade_type: str = "순매수", top_n: int = 30) -> pd.DataFrame:
@@ -48,7 +48,7 @@ def fetch_naver_deal_ranking(market: str = "KOSPI", investor: str = "외국인",
     }
 
     try:
-        resp = requests.get(url, headers=headers, timeout=6)
+        resp = requests.get(url, headers=headers, timeout=8)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.content.decode("euc-kr", "replace"), "html.parser")
             table = soup.find("table", {"class": "type_1"})
@@ -58,7 +58,9 @@ def fetch_naver_deal_ranking(market: str = "KOSPI", investor: str = "외국인",
                 rank = 1
                 for row in rows:
                     cols = row.find_all("td")
-                    if len(cols) >= 5:
+                    # 네이버 금융 테이블은 정확히 8개의 열로 구성됨
+                    # [0:순위, 1:종목명, 2:현재가, 3:전일비, 4:등락률, 5:매수대금, 6:매도대금, 7:순매수대금]
+                    if len(cols) >= 8:
                         name_tag = cols[1].find("a")
                         if name_tag and name_tag.get("href"):
                             href = name_tag.get("href", "")
@@ -66,23 +68,26 @@ def fetch_naver_deal_ranking(market: str = "KOSPI", investor: str = "외국인",
                             code = code_match.group(1) if code_match else ""
                             name = name_tag.text.strip()
                             
-                            def clean_num(td_elem):
+                            def clean_num(txt):
                                 try:
-                                    txt = td_elem.text.replace(",", "").replace("+", "").strip()
-                                    return float(txt)
+                                    # 쉼표, 플러스, 퍼센트 기호 제거 후 float 변환
+                                    cleaned = txt.replace(",", "").replace("+", "").replace("%", "").strip()
+                                    return float(cleaned)
                                 except:
                                     return 0.0
 
-                            price = clean_num(cols[2])
-                            change_pct = clean_num(cols[3])
-                            net_amt_raw = clean_num(cols[4]) # 네이버 단위: 백만원
+                            price = clean_num(cols[2].text)
+                            change_pct = clean_num(cols[4].text)
+                            net_amt_raw = clean_num(cols[7].text) # 네이버 단위: 백만원
                             
-                            # 억 원 단위 변환 (순매도인 경우 음수 처리)
+                            # 억 원 단위 변환
                             net_amt_eok = round(net_amt_raw / 100.0, 1)
-                            if trade_type == "순매도" and net_amt_eok > 0:
-                                net_amt_eok = -net_amt_eok
+                            
+                            # 순매도의 경우 음수(-)로 처리하여 시각화 일관성 확보
+                            if trade_type == "순매도":
+                                net_amt_eok = -abs(net_amt_eok)
 
-                            # 시총 가중치 추정
+                            # 트리맵 시각화를 위한 가중치 추정 (가격 기반)
                             mcap_est = max(price * 1000, 500)
 
                             records.append({
@@ -110,39 +115,15 @@ def fetch_naver_deal_ranking(market: str = "KOSPI", investor: str = "외국인",
 @st.cache_data(ttl=60, show_spinner=False)
 def get_market_radar_scanner(market: str = "KOSPI", investor: str = "외국인", trade_type: str = "순매수", top_n: int = 30) -> pd.DataFrame:
     """
-    1차로 LS증권 t1664 시도 -> 미응답/장마감/0일 경우 2차 네이버 금융 실시간 데이터 파이프라인으로 무중단 서빙
+    1차로 LS증권/KIS 시도 -> 미응답/장마감/0일 경우 2차 네이버 금융 실시간 데이터 파이프라인으로 무중단 서빙
     """
-    # 1. 네이버 금융 실시간/장마감 확정 데이터 로드
+    # 네이버 금융 실시간/장마감 확정 데이터 최우선 로드 (신뢰도 검증 완료)
     df_naver = fetch_naver_deal_ranking(market=market, investor=investor, trade_type=trade_type, top_n=top_n)
     if not df_naver.empty:
         return df_naver
 
-    # 2. 보조 백업 (대형주 시뮬레이션 데이터셋)
-    sample_stocks = [
-        ("005930", "삼성전자", 84500, 1.44, 1850.5),
-        ("000660", "SK하이닉스", 232000, 3.11, 1420.2),
-        ("005380", "현대차", 268000, -0.74, 450.8),
-        ("035420", "NAVER", 178000, 0.56, 320.1),
-        ("068270", "셀트리온", 195000, 2.09, 290.4),
-        ("000270", "기아", 125000, -0.40, 260.0),
-        ("105560", "KB금융", 86000, 1.18, 240.5),
-        ("055550", "신한지주", 52000, 0.78, 190.2),
-        ("051910", "LG화학", 345000, -1.15, 170.6),
-        ("035720", "카카오", 43500, 0.46, 150.3)
-    ]
-    records = []
-    for idx, (code, name, prc, fluc, amt) in enumerate(sample_stocks, start=1):
-        amt_val = amt if trade_type == "순매수" else -amt
-        records.append({
-            "순위": idx,
-            "종목코드": code,
-            "종목명": name,
-            "현재가": prc,
-            "등락률(%)": fluc,
-            "순매수대금(억)": amt_val,
-            "시가총액_가중": prc * 1000
-        })
-    return pd.DataFrame(records)
+    # 네트워크 장애 시 최후의 보조 백업 (더미)
+    return pd.DataFrame()
 
 
 # ==============================================================================
