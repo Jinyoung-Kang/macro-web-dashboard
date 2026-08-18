@@ -224,7 +224,7 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
 
     st.divider()
 
-    # 3. 신용 리스크, 은행권 및 시장 변동성 (무중단 지표 렌더링)
+    # 3. 신용 리스크, 은행권 및 시장 변동성
     st.subheader("⚡ 신용 리스크, 은행권 및 시장 변동성 (Credit & Liquidity Risk)")
     st.caption("주식·채권 가격 변동성, 기업 부도 위험(HY OAS), 글로벌 은행권 단기 자금경색(3M CP) 및 종합 금융스트레스(STLFSI4)를 모니터링합니다.")
 
