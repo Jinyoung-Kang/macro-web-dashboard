@@ -1,7 +1,7 @@
 """
 services/sec_service.py
 SEC EDGAR 13F-HR 공시 데이터 수집 및 기관 포트폴리오 분석 엔진
-(공식 SEC 헤더, 타임아웃 확장 및 다분기 무중단 Fallback 탑재)
+(2023+ SEC XML 실제 달러 단위 정규화 및 무중단 Fallback 탑재)
 """
 import logging
 import re
@@ -27,77 +27,76 @@ SEC_HEADERS = {
 # 1. 기관별 다분기 확정 13F 데이터셋 (SEC 통신 타임아웃 시 100% 안전 서빙)
 # ==============================================================================
 def _generate_fallback_multi_quarters(cik: str, max_quarters: int = 4):
-    """SEC 서버 차단/지연 시 기관별 고품질 4~8개 분기 13F 시계열 생성"""
+    """SEC 서버 차단/지연 시 기관별 고품질 4~8개 분기 13F 시계열 생성 (정확한 USD 단위)"""
     clean_cik = str(cik).lstrip("0")
     
-    # 대표 기관별 핵심 보유 자산 베이스
+    # 대표 기관별 실제 포트폴리오 평가액 베이스 (단위: 실제 USD 달러)
     holdings_dict = {
-        "1067983": [ # 버크셔 해서웨이
-            ("APPLE INC", "037833100", "COM", 68500000000, 300000000),
-            ("AMERICAN EXPRESS CO", "025816109", "COM", 41200000000, 151600000),
-            ("BANK OF AMERICA CORP", "060505104", "COM", 32100000000, 766000000),
-            ("COCA COLA CO", "191216100", "COM", 27800000000, 400000000),
-            ("CHEVRON CORP NEW", "166764100", "COM", 18900000000, 118000000),
-            ("OCCIDENTAL PETROLEUM CORP", "674599105", "COM", 14200000000, 255000000),
-            ("KRAFT HEINZ CO", "500754106", "COM", 11500000000, 325000000),
-            ("MOODYS CORP", "615369105", "COM", 11200000000, 24600000),
-            ("CHUBB LIMITED", "H1467J104", "COM", 7500000000, 27000000),
-            ("DAVITA INC", "23918K108", "COM", 4800000000, 34000000),
-            ("CITIGROUP INC", "172967424", "COM", 3200000000, 55000000),
-            ("KROGER CO", "501044101", "COM", 2600000000, 50000000),
-            ("VERISIGN INC", "92343E102", "COM", 2400000000, 12800000),
-            ("AMAZON COM INC", "023135106", "COM", 2100000000, 10000000),
-            ("MASTERCARD INC", "57636Q104", "COM", 1900000000, 3900000)
+        "1067983": [ # 버크셔 해서웨이 (워런 버핏)
+            ("APPLE INC", "037833100", "COM", 68500000000.0, 300000000),
+            ("AMERICAN EXPRESS CO", "025816109", "COM", 41200000000.0, 151600000),
+            ("BANK OF AMERICA CORP", "060505104", "COM", 32100000000.0, 766000000),
+            ("COCA COLA CO", "191216100", "COM", 27800000000.0, 400000000),
+            ("CHEVRON CORP NEW", "166764100", "COM", 18900000000.0, 118000000),
+            ("OCCIDENTAL PETROLEUM CORP", "674599105", "COM", 14200000000.0, 255000000),
+            ("KRAFT HEINZ CO", "500754106", "COM", 11500000000.0, 325000000),
+            ("MOODYS CORP", "615369105", "COM", 11200000000.0, 24600000),
+            ("CHUBB LIMITED", "H1467J104", "COM", 7500000000.0, 27000000),
+            ("DAVITA INC", "23918K108", "COM", 4800000000.0, 34000000),
+            ("CITIGROUP INC", "172967424", "COM", 3200000000.0, 55000000),
+            ("KROGER CO", "501044101", "COM", 2600000000.0, 50000000),
+            ("VERISIGN INC", "92343E102", "COM", 2400000000.0, 12800000),
+            ("AMAZON COM INC", "023135106", "COM", 2100000000.0, 10000000),
+            ("MASTERCARD INC", "57636Q104", "COM", 1900000000.0, 3900000)
         ],
-        "1350694": [ # 브리지워터
-            ("ISHARES CORE S&P 500 ETF", "464287200", "ETF", 1180000000, 2100000),
-            ("ISHARES CORE MSCI EMERGING", "46434G103", "ETF", 950000000, 17800000),
-            ("ALPHABET INC", "02079K305", "CL A", 860000000, 4800000),
-            ("NVIDIA CORP", "67066G104", "COM", 820000000, 6500000),
-            ("META PLATFORMS INC", "30303M102", "CL A", 780000000, 1450000),
-            ("MICROSOFT CORP", "594918104", "COM", 710000000, 1600000),
-            ("AMAZON COM INC", "023135106", "COM", 680000000, 3500000),
-            ("PROCTER & GAMBLE CO", "742718109", "COM", 650000000, 3800000),
-            ("JOHNSON & JOHNSON", "478160104", "COM", 620000000, 3900000),
-            ("SPDR S&P 500 ETF TRUST", "78462F103", "ETF", 590000000, 1050000),
-            ("WALMART INC", "931142103", "COM", 520000000, 6200000),
-            ("COCA COLA CO", "191216100", "COM", 480000000, 7200000)
+        "1350694": [ # 브리지워터 (레이 달리오)
+            ("ISHARES CORE S&P 500 ETF", "464287200", "ETF", 1180000000.0, 2100000),
+            ("ISHARES CORE MSCI EMERGING", "46434G103", "ETF", 950000000.0, 17800000),
+            ("ALPHABET INC", "02079K305", "CL A", 860000000.0, 4800000),
+            ("NVIDIA CORP", "67066G104", "COM", 820000000.0, 6500000),
+            ("META PLATFORMS INC", "30303M102", "CL A", 780000000.0, 1450000),
+            ("MICROSOFT CORP", "594918104", "COM", 710000000.0, 1600000),
+            ("AMAZON COM INC", "023135106", "COM", 680000000.0, 3500000),
+            ("PROCTER & GAMBLE CO", "742718109", "COM", 650000000.0, 3800000),
+            ("JOHNSON & JOHNSON", "478160104", "COM", 620000000.0, 3900000),
+            ("SPDR S&P 500 ETF TRUST", "78462F103", "ETF", 590000000.0, 1050000),
+            ("WALMART INC", "931142103", "COM", 520000000.0, 6200000),
+            ("COCA COLA CO", "191216100", "COM", 480000000.0, 7200000)
         ],
-        "1649339": [ # 사이언 에셋
-            ("ALIBABA GROUP HLDG LTD", "01609W102", "SPONSORED ADS", 18500000, 200000),
-            ("JD COM INC", "47215P106", "SPONSORED ADS", 14800000, 350000),
-            ("BAIDU INC", "056752108", "SPONSORED ADS", 12200000, 120000),
-            ("HCA HEALTHCARE INC", "40412C101", "COM", 11500000, 30000),
-            ("CVS HEALTH CORP", "126650100", "COM", 9800000, 150000),
-            ("BP PLC", "055622104", "SPONSORED ADS", 9200000, 250000),
-            ("CITIGROUP INC", "172967424", "COM", 8500000, 140000),
-            ("RED ROBIN GOURMET BURGERS", "75689M101", "COM", 6500000, 700000)
+        "1649339": [ # 사이언 에셋 (마이클 버리)
+            ("ALIBABA GROUP HLDG LTD", "01609W102", "SPONSORED ADS", 18500000.0, 200000),
+            ("JD COM INC", "47215P106", "SPONSORED ADS", 14800000.0, 350000),
+            ("BAIDU INC", "056752108", "SPONSORED ADS", 12200000.0, 120000),
+            ("HCA HEALTHCARE INC", "40412C101", "COM", 11500000.0, 30000),
+            ("CVS HEALTH CORP", "126650100", "COM", 9800000.0, 150000),
+            ("BP PLC", "055622104", "SPONSORED ADS", 9200000.0, 250000),
+            ("CITIGROUP INC", "172967424", "COM", 8500000.0, 140000),
+            ("RED ROBIN GOURMET BURGERS", "75689M101", "COM", 6500000.0, 700000)
         ],
         "1517399": [ # 듀케인 패밀리 오피스 (스탠리 드러켄밀러)
-            ("NVIDIA CORP", "67066G104", "COM", 580000000, 4600000),
-            ("MICROSOFT CORP", "594918104", "COM", 420000000, 950000),
-            ("COUPANG INC", "22266T109", "CL A", 390000000, 18500000),
-            ("AMAZON COM INC", "023135106", "COM", 310000000, 1600000),
-            ("ELI LILLY & CO", "532457108", "COM", 280000000, 310000),
-            ("META PLATFORMS INC", "30303M102", "CL A", 240000000, 450000),
-            ("COHERENT CORP", "19247G107", "COM", 210000000, 2200000),
-            ("NUCOR CORP", "670346105", "COM", 180000000, 1100000),
-            ("ALIBABA GROUP HLDG LTD", "01609W102", "SPONSORED ADS", 150000000, 1600000)
+            ("NVIDIA CORP", "67066G104", "COM", 580000000.0, 4600000),
+            ("MICROSOFT CORP", "594918104", "COM", 420000000.0, 950000),
+            ("COUPANG INC", "22266T109", "CL A", 390000000.0, 18500000),
+            ("AMAZON COM INC", "023135106", "COM", 310000000.0, 1600000),
+            ("ELI LILLY & CO", "532457108", "COM", 280000000.0, 310000),
+            ("META PLATFORMS INC", "30303M102", "CL A", 240000000.0, 450000),
+            ("COHERENT CORP", "19247G107", "COM", 210000000.0, 2200000),
+            ("NUCOR CORP", "670346105", "COM", 180000000.0, 1100000),
+            ("ALIBABA GROUP HLDG LTD", "01609W102", "SPONSORED ADS", 150000000.0, 1600000)
         ]
     }
     
-    # 기본 종목군 (매핑되지 않은 CIK용 공통 메이저 보유 종목)
     default_holdings = [
-        ("MICROSOFT CORP", "594918104", "COM", 1250000000, 2800000),
-        ("NVIDIA CORP", "67066G104", "COM", 1180000000, 9300000),
-        ("AMAZON COM INC", "023135106", "COM", 950000000, 4900000),
-        ("META PLATFORMS INC", "30303M102", "CL A", 890000000, 1650000),
-        ("APPLE INC", "037833100", "COM", 820000000, 3600000),
-        ("ALPHABET INC", "02079K305", "CL A", 750000000, 4200000),
-        ("ELI LILLY & CO", "532457108", "COM", 610000000, 680000),
-        ("BROADCOM INC", "11135F101", "COM", 540000000, 380000),
-        ("BERKSHIRE HATHAWAY INC DEL", "084670702", "CL B", 420000000, 920000),
-        ("ALIBABA GROUP HLDG LTD", "01609W102", "SPONSORED ADS", 380000000, 4100000)
+        ("MICROSOFT CORP", "594918104", "COM", 1250000000.0, 2800000),
+        ("NVIDIA CORP", "67066G104", "COM", 1180000000.0, 9300000),
+        ("AMAZON COM INC", "023135106", "COM", 950000000.0, 4900000),
+        ("META PLATFORMS INC", "30303M102", "CL A", 890000000.0, 1650000),
+        ("APPLE INC", "037833100", "COM", 820000000.0, 3600000),
+        ("ALPHABET INC", "02079K305", "CL A", 750000000.0, 4200000),
+        ("ELI LILLY & CO", "532457108", "COM", 610000000.0, 680000),
+        ("BROADCOM INC", "11135F101", "COM", 540000000.0, 380000),
+        ("BERKSHIRE HATHAWAY INC DEL", "084670702", "CL B", 420000000.0, 920000),
+        ("ALIBABA GROUP HLDG LTD", "01609W102", "SPONSORED ADS", 380000000.0, 4100000)
     ]
     
     base_data = holdings_dict.get(clean_cik, default_holdings)
@@ -142,7 +141,7 @@ def _generate_fallback_multi_quarters(cik: str, max_quarters: int = 4):
 
 
 # ==============================================================================
-# 2. 통합 13F 분기 데이터 크롤러 (실시간 시도 -> 실패 시 고품질 Fallback)
+# 2. 통합 13F 분기 데이터 크롤러 (실시간 시도 -> 단위 자동 판별 -> 실패 시 Fallback)
 # ==============================================================================
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
@@ -211,9 +210,10 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
                                             shrs_info = info.find('n:shrsOrPrnAmt', ns)
                                             shares = float(shrs_info.find('n:sshPrnamt', ns).text) if shrs_info is not None and shrs_info.find('n:sshPrnamt', ns) is not None else 0.0
 
+                                            # 2023+ SEC XML은 실제 달러($) 단위임 (1000을 곱하지 않음)
                                             try:
-                                                val = float(val_text) * 1000.0 
-                                            except ValueError:
+                                                val = float(val_text)
+                                            except (ValueError, TypeError):
                                                 val = 0.0
 
                                             if name and val > 0:
@@ -221,6 +221,12 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
 
                                         if data:
                                             df = pd.DataFrame(data)
+                                            
+                                            # 구형 레거시 파일 감지: 전체 합산액이 $100M(13F 최소 공시 기준) 미만이면 천 달러 단위이므로 1000 곱함
+                                            raw_sum = df['value'].sum()
+                                            if 0 < raw_sum < 100_000_000:
+                                                df['value'] = df['value'] * 1000.0
+
                                             df = df.groupby(['name', 'cusip', 'class'], as_index=False).agg({'value': 'sum', 'shares': 'sum'})
                                             df = df.sort_values(by='value', ascending=False).reset_index(drop=True)
                                             total_aum = df['value'].sum()
