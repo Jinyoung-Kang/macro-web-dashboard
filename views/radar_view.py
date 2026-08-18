@@ -14,7 +14,7 @@ from services.radar_service import get_market_radar_scanner, get_stock_cumulativ
 
 def render_radar_view():
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
-    now_str = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+    now_str = now_kst.strftime("%Y-%m-%d %H:%M:%S KST")
     weekday = now_kst.weekday()
     time_num = now_kst.hour * 100 + now_kst.minute
     
@@ -22,7 +22,7 @@ def render_radar_view():
         market_status_text = "⚪ 주말 휴장 (최근 거래일 확정 수급)"
         status_color = "#8B949E"
     elif 900 <= time_num < 1530:
-        market_status_text = "🟢 코스피/코스닥 정규장 (실시간 수급 동기화 중)"
+        market_status_text = "🟢 코스피/코스닥 정규장 (실시간 수급 집계 중)"
         status_color = "#3FB950"
     elif 1530 <= time_num <= 1800:
         market_status_text = "🟣 시간외 단일가 / 애프터마켓 (당일 최종 누적 수급)"
@@ -68,63 +68,69 @@ def render_radar_view():
         # 무중단 파이프라인에서 데이터 로드
         df_radar = get_market_radar_scanner(market=market_key, investor=investor_sel, trade_type=trade_sel, top_n=top_n)
 
-        # 데이터 출처 경고 처리
-        data_source = df_radar["데이터_출처"].iloc[0] if not df_radar.empty and "데이터_출처" in df_radar.columns else "알 수 없음"
-        if "모의" in data_source:
-            st.warning("⚠️ **현재 API 및 웹 서버 응답 지연 상태입니다.** 화면 레이아웃 보호를 위해 '가상의 모의 데이터'가 표출 중입니다. 잠시 후 다시 시도해주세요.")
+        if df_radar.empty:
+            st.error("""
+            ❌ **실시간 수급 데이터 연동 실패 (데이터 수신 불가)**
+            
+            **[실패 원인 점검 가이드]**:
+            1. **장 마감 후 원장 정리 시간**: 평일 15:30 이후 또는 야간 시간대에는 증권사 실시간 속보 TR이 초기화되어 데이터를 반환하지 않습니다.
+            2. **API 키 설정 상태**: Streamlit Secrets에 `[ls]` 또는 `[kis]` API 인증키가 올바르게 등록되어 있는지 확인하십시오.
+            3. **개별 종목 정밀 분석 탭 이용**: 2번째 탭인 **[개별 종목 수급 정밀 분석]**에서 과거 30영업일 누적 수급 흐름을 조회하십시오.
+            """)
+        else:
+            data_source = df_radar["데이터_출처"].iloc[0] if "데이터_출처" in df_radar.columns else "실시간 수급 API"
+            top1 = df_radar.iloc[0]
+            total_top_amt = df_radar["순매수대금(억)"].sum()
+            
+            sc1, sc2, sc3 = st.columns(3)
+            with sc1:
+                st.metric(label=f"🥇 1위 집중 종목 ({investor_sel})", value=f"{top1['종목명']}", delta=f"{top1['순매수대금(억)']:+,.1f} 억")
+            with sc2:
+                st.metric(label=f"상위 {len(df_radar)}개사 합산 {trade_sel} 규모", value=f"{total_top_amt:+,.1f} 억원")
+            with sc3:
+                st.metric(label="📡 데이터 소스 및 기준 시각", value=data_source, delta=now_str, delta_color="off")
 
-        # 정상 렌더링
-        top1 = df_radar.iloc[0]
-        total_top_amt = df_radar["순매수대금(억)"].sum()
-        
-        sc1, sc2, sc3 = st.columns(3)
-        with sc1:
-            st.metric(label=f"🥇 1위 집중 종목 ({investor_sel})", value=f"{top1['종목명']}", delta=f"{top1['순매수대금(억)']:+,.1f} 억")
-        with sc2:
-            st.metric(label=f"상위 {len(df_radar)}개사 합산 {trade_sel} 규모", value=f"{total_top_amt:+,.1f} 억원")
-        with sc3:
-            st.metric(label="📡 데이터 파이프라인 소스", value=data_source, delta=f"기준: {now_str}", delta_color="off")
+            st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
-        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+            st.markdown(f"#### 🗺️ {investor_sel} {trade_sel} 상위 종목 맵 (Treemap)")
+            
+            df_radar["Abs_Amt"] = df_radar["순매수대금(억)"].abs()
+            fig_tree = px.treemap(
+                df_radar,
+                path=["종목명"],
+                values="Abs_Amt",
+                color="등락률(%)",
+                color_continuous_scale=["#388BFD", "#161B22", "#F85149"],
+                color_continuous_midpoint=0.0,
+                hover_data={"종목코드": True, "현재가": ":,.0f", "순매수대금(억)": ":+,.1f", "등락률(%)": ":+.2f"},
+                height=480
+            )
+            
+            # 중앙 정렬 및 폰트 크기 최적화
+            fig_tree.update_traces(
+                textposition="middle center",
+                textfont=dict(size=15, color="white", weight="bold"),
+                hovertemplate="<b>%{label}</b><br>현재가: %{customdata[1]:,.0f}원<br>등락률: %{customdata[3]:+.2f}%<br>순매수금액: %{customdata[2]:+,.1f}억원"
+            )
+            fig_tree.update_layout(
+                paper_bgcolor="#0D1117",
+                plot_bgcolor="#161B22",
+                margin=dict(l=10, r=10, t=20, b=10)
+            )
+            st.plotly_chart(fig_tree, use_container_width=True)
 
-        st.markdown(f"#### 🗺️ {investor_sel} {trade_sel} 상위 종목 맵 (Treemap)")
-        
-        df_radar["Abs_Amt"] = df_radar["순매수대금(억)"].abs()
-        fig_tree = px.treemap(
-            df_radar,
-            path=["종목명"],
-            values="Abs_Amt",
-            color="등락률(%)",
-            color_continuous_scale=["#388BFD", "#161B22", "#F85149"],
-            color_continuous_midpoint=0.0,
-            hover_data={"종목코드": True, "현재가": ":,.0f", "순매수대금(억)": ":+,.1f", "등락률(%)": ":+.2f"},
-            height=480
-        )
-        
-        fig_tree.update_traces(
-            textposition="middle center",
-            textfont=dict(size=15, color="white", weight="bold"),
-            hovertemplate="<b>%{label}</b><br>현재가: %{customdata[1]:,.0f}원<br>등락률: %{customdata[3]:+.2f}%<br>순매수금액: %{customdata[2]:+,.1f}억원"
-        )
-        fig_tree.update_layout(
-            paper_bgcolor="#0D1117",
-            plot_bgcolor="#161B22",
-            margin=dict(l=10, r=10, t=20, b=10)
-        )
-        st.plotly_chart(fig_tree, use_container_width=True)
-
-        st.markdown(f"#### 📋 {investor_sel} {trade_sel} 상위 {len(df_radar)}개 종목 리스트")
-        display_cols = ["순위", "종목코드", "종목명", "현재가", "등락률(%)", "순매수대금(억)"]
-        st.dataframe(
-            df_radar[display_cols],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "현재가": st.column_config.NumberColumn(format="%d 원"),
-                "등락률(%)": st.column_config.NumberColumn(format="%+.2f%%"),
-                "순매수대금(억)": st.column_config.NumberColumn(format="%+,.1f 억")
-            }
-        )
+            st.markdown(f"#### 📋 {investor_sel} {trade_sel} 상위 {len(df_radar)}개 종목 리스트")
+            display_cols = ["순위", "종목코드", "종목명", "현재가", "등락률(%)", "순매수대금(억)"]
+            st.dataframe(
+                df_radar[display_cols],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "현재가": st.column_config.NumberColumn(format="%d 원"),
+                    "등락률(%)": st.column_config.NumberColumn(format="%+.2f%%"),
+                    "순매수대금(억)": st.column_config.NumberColumn(format="%+,.1f 억")
+                }
+            )
 
     # ==========================================================================
     # TAB 2: 개별 종목 수급 정밀 분석 (영점조정 누적 수급 흐름도)
@@ -216,3 +222,5 @@ def render_radar_view():
                     df_cum.sort_values("Date", ascending=False),
                     use_container_width=True, hide_index=True
                 )
+        else:
+            st.warning("⚠️ 해당 종목의 과거 시계열 수급 데이터를 불러오지 못했습니다.")
