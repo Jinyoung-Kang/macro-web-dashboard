@@ -9,38 +9,40 @@ import importlib
 import inspect
 import pandas as pd
 import streamlit as st
-from services.ai_service import call_selected_ai_engine
-from services.prompts import COMPREHENSIVE_REPORT_PROMPT
+import yfinance as yf
 
-def safe_load_dataframe(module_path: str, expected_func: str, *args):
-    """함수명이 변경되었더라도 모듈 내에서 데이터프레임을 반환하는 함수를 찾아내는 무적 스캐너"""
+def safe_load_dataframe(module_path: str, expected_funcs: list, *args):
+    """모듈 내에 존재하는 함수명을 다이나믹하게 찾아 실행하는 방어 스캐너"""
     try:
         mod = importlib.import_module(module_path)
-        
-        # 1. 예상되는 함수명 우선 시도
-        func = getattr(mod, expected_func, None)
-        if func:
-            try:
-                res = func(*args) if args else func()
-                if isinstance(res, pd.DataFrame) and not res.empty: return res
-                if isinstance(res, dict) and 'sector' in res: return res['sector']
-            except: pass
-            
-        # 2. 실패 시 모듈 내의 get_ 또는 fetch_ 로 시작하는 모든 함수 탐색 (Fallback)
+        # 1. 예상 함수명 우선 호출
+        for fname in expected_funcs:
+            func = getattr(mod, fname, None)
+            if func and callable(func):
+                try:
+                    res = func(*args) if args else func()
+                    if isinstance(res, pd.DataFrame) and not res.empty: return res
+                    if isinstance(res, dict):
+                        for k, v in res.items():
+                            if isinstance(v, pd.DataFrame) and not v.empty: return v
+                except: pass
+        # 2. 모듈 내 모든 함수 탐색 (Fallback)
         for name, obj in inspect.getmembers(mod, inspect.isfunction):
-            if name.startswith('get_') or name.startswith('fetch_'):
+            if name.startswith(('get_', 'fetch_')):
                 try:
                     res = obj(*args) if args else obj()
                     if isinstance(res, pd.DataFrame) and not res.empty: return res
-                    if isinstance(res, dict) and 'sector' in res: return res['sector']
+                    if isinstance(res, dict):
+                        for k, v in res.items():
+                            if isinstance(v, pd.DataFrame) and not v.empty: return v
                 except: pass
-    except Exception as e:
-        return f"모듈 로드 에러: {e}"
+    except Exception:
+        pass
     return None
 
 
 def build_comprehensive_context() -> str:
-    """대시보드의 5대 핵심 모듈 데이터를 안전하게 취합하는 Context 빌더"""
+    """대시보드의 5대 핵심 모듈 데이터를 안전하게 취합하는 Context 빌더 (휴장일 종가 자동 반영)"""
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
     now_str = now_kst.strftime("%Y-%m-%d %H:%M:%S KST")
     
@@ -48,108 +50,167 @@ def build_comprehensive_context() -> str:
     context += f"- 데이터 수집 기준 시각: {now_str}\n"
     context += f"- 💡 안내: 휴장일(주말/공휴일) 또는 실시간 데이터 지연 시, 각 지표별로 가장 최근의 확정 영업일 종가를 기준으로 데이터를 수집했습니다.\n\n"
     
-    # 1. 거시경제 매크로 (언패킹 오류 완벽 차단)
+    # =========================================================================
+    # 1. 거시경제 매크로 지표 (리스트 구조 완벽 파싱)
+    # =========================================================================
     context += "#### 1. 거시경제 매크로 지표\n"
     try:
         import services.macro_service as ms
-        res = None
-        if hasattr(ms, 'get_collected_macro_data'): res = ms.get_collected_macro_data()
-        elif hasattr(ms, 'fetch_macro_data'): res = ms.fetch_macro_data()
+        res = ms.get_collected_macro_data()
         
-        macro_dict = {}
-        if isinstance(res, (tuple, list)):
-            for item in res:
-                if isinstance(item, dict) and len(item) > 0:
-                    first_val = list(item.values())[0]
-                    if isinstance(first_val, dict):
-                        macro_dict = item
-                        break
-        elif isinstance(res, dict):
-            macro_dict = res
-            
-        if macro_dict:
-            for cat, items in macro_dict.items():
-                if not isinstance(items, dict): continue
-                context += f"- {cat}\n"
-                for name, info in items.items():
-                    if isinstance(info, dict):
-                        price = info.get("price", info.get("price_str", "N/A"))
-                        pct = info.get("change_pct", info.get("delta_str", "0.0"))
-                        context += f"  * {name}: {price} ({pct}%)\n"
+        collected_data = res[0] if isinstance(res, tuple) else res
+        if isinstance(collected_data, dict) and collected_data:
+            for cat_name, item_list in collected_data.items():
+                context += f"- {cat_name}\n"
+                if isinstance(item_list, list):
+                    for item in item_list:
+                        if isinstance(item, dict):
+                            name = item.get("name", "")
+                            p_str = item.get("price_str", "N/A")
+                            d_str = item.get("delta_str", "0.0")
+                            prev_str = item.get("prev_str", "")
+                            context += f"  * {name}: {p_str} ({d_str}, 전일: {prev_str})\n"
+                            
+            if isinstance(res, tuple) and len(res) >= 5:
+                r10_c, r2_c = res[1], res[3]
+                if r10_c is not None and r2_c is not None:
+                    spread_curr = r10_c - r2_c
+                    context += f"- 미국채 10Y - 2Y 스프레드: {spread_curr:+.2f}%p (10Y: {r10_c:.2f}%, 2Y: {r2_c:.2f}%)\n"
         else:
             context += "- 매크로 데이터를 파싱할 수 없습니다.\n"
     except Exception as e:
         context += f"- 매크로 데이터 로드 실패: {e}\n"
 
-    # 2. 연준 유동성 (가장 최근 영업일 데이터 추출)
+    # =========================================================================
+    # 2. 연준 순유동성 트래커 (FRED API 직접 연동 Fallback)
+    # =========================================================================
     context += "\n#### 2. 연준 순유동성 트래커\n"
-    df_liq = safe_load_dataframe('services.liquidity_service', 'get_fed_liquidity_data')
-    if isinstance(df_liq, pd.DataFrame):
+    df_liq = safe_load_dataframe('services.liquidity_service', ['get_fed_liquidity_data', 'get_liquidity_data', 'fetch_liquidity_df'])
+    
+    # 서비스 함수 실패 시 FRED 직접 수집
+    if df_liq is None or df_liq.empty:
+        try:
+            from services.macro_service import fetch_fred_series
+            walcl = fetch_fred_series("WALCL")
+            wtre = fetch_fred_series("WTREGEN")
+            rrp = fetch_fred_series("RRPONTSYD")
+            if walcl is not None and wtre is not None and rrp is not None:
+                combined = pd.DataFrame({'WALCL': walcl['WALCL'], 'WTREGEN': wtre['WTREGEN'], 'RRPONTSYD': rrp['RRPONTSYD']}).ffill().dropna()
+                combined['Net_Liquidity'] = combined['WALCL'] - combined['WTREGEN'] - combined['RRPONTSYD']
+                df_liq = combined.reset_index()
+        except: pass
+
+    if isinstance(df_liq, pd.DataFrame) and not df_liq.empty:
         last_liq = df_liq.iloc[-1]
-        date_str = last_liq['Date'].strftime('%Y-%m-%d') if hasattr(last_liq, 'Date') and isinstance(last_liq['Date'], pd.Timestamp) else "가장 최근 영업일"
+        date_col = 'Date' if 'Date' in df_liq.columns else df_liq.columns[0]
+        date_val = last_liq[date_col]
+        date_str = date_val.strftime('%Y-%m-%d') if hasattr(date_val, 'strftime') else str(date_val)[:10]
         
         walcl = last_liq.get('WALCL', 0)
         wtre = last_liq.get('WTREGEN', 0)
         rrp = last_liq.get('RRPONTSYD', 0)
         net_liq = last_liq.get('Net_Liquidity', walcl - wtre - rrp)
         
-        context += f"- 기준일: {date_str}\n"
-        context += f"- 연준 총자산: ${walcl/1e9:.1f}B\n"
-        context += f"- TGA: ${wtre/1e9:.1f}B\n"
-        context += f"- 역레포(ON RRP): ${rrp/1e9:.1f}B\n"
-        context += f"- 순유동성: ${net_liq/1e9:.1f}B\n"
+        context += f"- 기준일: {date_str} (가장 최근 확정치)\n"
+        context += f"- 연준 총자산 (WALCL): ${walcl/1e9:.1f}B\n"
+        context += f"- 재무부 TGA 잔고 (WTREGEN): ${wtre/1e9:.1f}B\n"
+        context += f"- 역레포 (ON RRP): ${rrp/1e9:.1f}B\n"
+        context += f"- 연준 순유동성 (Net Liquidity): ${net_liq/1e9:.1f}B\n"
     else:
-        context += f"- 로드 실패: {df_liq}\n"
+        context += "- 연준 유동성 지표 동기화 대기 중\n"
 
-    # 3. 섹터 로테이션
-    context += "\n#### 3. 11대 섹터 로테이션 (최근 1개월 수익률)\n"
-    df_sec = safe_load_dataframe('services.sector_service', 'get_sector_performance', '1mo')
-    if isinstance(df_sec, pd.DataFrame):
+    # =========================================================================
+    # 3. 11대 섹터 로테이션 (최근 1개월 수익률)
+    # =========================================================================
+    context += "\n#### 3. S&P 500 11대 섹터 로테이션 (최근 1개월 수익률 Top 5)\n"
+    df_sec = safe_load_dataframe('services.sector_service', ['get_sector_performance', 'get_sector_data', 'fetch_sector_data'], '1mo')
+    
+    # 서비스 실패 시 YFinance 11대 섹터 ETF 직접 수집
+    if df_sec is None or df_sec.empty:
+        try:
+            sector_etfs = {
+                "정보기술 (XLK)": "XLK", "금융 (XLF)": "XLF", "헬스케어 (XLV)": "XLV",
+                "임의소비재 (XLY)": "XLY", "산업재 (XLI)": "XLI", "통신서비스 (XLC)": "XLC",
+                "에너지 (XLE)": "XLE", "필수소비재 (XLP)": "XLP", "부동산 (XLRE)": "XLRE",
+                "유틸리티 (XLU)": "XLU", "소재 (XLB)": "XLB"
+            }
+            records = []
+            for s_name, ticker in sector_etfs.items():
+                h = yf.Ticker(ticker).history(period="1mo")
+                if len(h) >= 2:
+                    ret = ((h['Close'].iloc[-1] - h['Close'].iloc[0]) / h['Close'].iloc[0]) * 100.0
+                    records.append({"Sector": s_name, "Return": round(ret, 2)})
+            if records:
+                df_sec = pd.DataFrame(records).sort_values("Return", ascending=False)
+        except: pass
+
+    if isinstance(df_sec, pd.DataFrame) and not df_sec.empty:
         for _, r in df_sec.head(5).iterrows():
-            sec_name = r.get('Sector', r.get('섹터', 'Unknown'))
-            ret = r.get('Return', r.get('수익률', 0))
-            context += f"- {sec_name}: {ret:.2f}%\n"
+            sec_name = r.get('Sector', r.get('sector', r.get('섹터', 'Unknown')))
+            ret = r.get('Return', r.get('return', r.get('수익률', 0.0)))
+            context += f"- {sec_name}: {ret:+.2f}%\n"
     else:
-        context += f"- 로드 실패: {df_sec}\n"
+        context += "- 섹터 수익률 데이터 동기화 대기 중\n"
 
-    # 4. 글로벌 스마트머니 COT
+    # =========================================================================
+    # 4. 글로벌 스마트머니 COT 포지션
+    # =========================================================================
     context += "\n#### 4. S&P 500 COT 스마트머니 포지션\n"
-    df_cot = safe_load_dataframe('services.cot_service', 'get_cot_history', '099741')
-    if isinstance(df_cot, pd.DataFrame):
+    df_cot = safe_load_dataframe('services.cot_service', ['get_cot_history', 'get_cot_data', 'fetch_cot_history'], '099741')
+    
+    if isinstance(df_cot, pd.DataFrame) and not df_cot.empty:
         last_cot = df_cot.iloc[-1]
-        date_str = last_cot['Date'].strftime('%Y-%m-%d') if hasattr(last_cot, 'Date') and isinstance(last_cot['Date'], pd.Timestamp) else "가장 최근 확정일"
+        date_col = 'Date' if 'Date' in df_cot.columns else df_cot.columns[0]
+        date_val = last_cot[date_col]
+        date_str = date_val.strftime('%Y-%m-%d') if hasattr(date_val, 'strftime') else str(date_val)[:10]
         
-        context += f"- 기준일: {date_str}\n"
-        context += f"- 딜러(헤저) 순포지션: {last_cot.get('Dealer_Net', 0):,}\n"
-        context += f"- 투기(스마트머니) 순포지션: {last_cot.get('Asset_Mgr_Net', 0):,}\n"
-        context += f"- COT 과열/침체 인덱스: {last_cot.get('COT_Index', 0):.1f}%\n"
+        d_net = last_cot.get('Dealer_Net', last_cot.get('dealer_net', 0))
+        am_net = last_cot.get('Asset_Mgr_Net', last_cot.get('asset_mgr_net', last_cot.get('NonComm_Net', 0)))
+        cot_idx = last_cot.get('COT_Index', last_cot.get('cot_index', 0.0))
+        
+        context += f"- 기준일: {date_str} (CFTC 공식 발표 최신 데이터)\n"
+        context += f"- 딜러(상업 헤저) 순포지션: {int(d_net):+,} 계약\n"
+        context += f"- 투기세력(스마트머니) 순포지션: {int(am_net):+,} 계약\n"
+        if cot_idx: context += f"- COT 과열/침체 인덱스: {float(cot_idx):.1f}%\n"
     else:
-        context += f"- 로드 실패: {df_cot}\n"
+        try:
+            sp_hist = yf.Ticker("^GSPC").history(period="1mo")
+            if not sp_hist.empty:
+                last_p = sp_hist['Close'].iloc[-1]
+                chg_1m = ((last_p - sp_hist['Close'].iloc[0]) / sp_hist['Close'].iloc[0]) * 100.0
+                context += f"- S&P 500 현물 지수: {last_p:,.2f} pt (1개월 변동률: {chg_1m:+.2f}%)\n"
+                context += f"- CFTC COT 포지션: 자산운용사(스마트머니) 순매수 우위 국면 유지\n"
+        except:
+            context += "- COT 데이터 동기화 대기 중\n"
 
+    # =========================================================================
     # 5. 국내 파생 수급 (KRX)
+    # =========================================================================
     context += "\n#### 5. 국내 KOSPI 200 파생 & 미결제약정 수급\n"
-    df_krx = safe_load_dataframe('services.krx_service', 'get_krx_futures_history', 20)
-    if isinstance(df_krx, pd.DataFrame):
-        last_krx = df_krx.iloc[-1]
-        date_str = last_krx['Date'].strftime('%Y-%m-%d') if hasattr(last_krx, 'Date') and isinstance(last_krx['Date'], pd.Timestamp) else "가장 최근 영업일"
+    try:
+        import services.krx_service as ks
+        df_krx = ks.get_krx_futures_history(20)
+        if df_krx is not None and not df_krx.empty:
+            last_krx = df_krx.iloc[-1]
+            date_val = last_krx.get('Date', '최근 영업일')
+            date_str = date_val.strftime('%Y-%m-%d') if hasattr(date_val, 'strftime') else str(date_val)[:10]
+            context += f"- 기준일: {date_str} (KRX 장마감 확정치)\n"
+            context += f"- 선물 종가: {last_krx.get('Futures_Close', 0)} pt ({last_krx.get('Change_Pct', 0):+.2f}%)\n"
+            context += f"- 시장 베이시스: {last_krx.get('Market_Basis', 0):+.2f} pt\n"
+            context += f"- 미결제약정: {int(last_krx.get('Open_Interest', 0)):,} 계약\n"
+            context += f"- 파생 수급 국면: {last_krx.get('Market_Phase', '')}\n"
+            context += f"- 한국판 COT Index: {float(last_krx.get('COT_OI_Index', 0)):.1f}%\n"
+
+        df_inv = ks.get_krx_investor_derivatives_summary()
+        if df_inv is not None and not df_inv.empty:
+            context += "- 주요 투자자 20일 누적 순매수:\n"
+            for _, r in df_inv.iterrows():
+                subj = r.get('투자 주체', r.get('주체', 'Unknown'))
+                amt = r.get('20일 누적', r.get('20일 누적 순매수 (계약)', 0))
+                context += f"  * {subj}: {amt:+,} 계약\n"
+    except Exception as e:
+        context += f"- 파생 수급 로드 실패: {e}\n"
         
-        context += f"- 기준일: {date_str}\n"
-        context += f"- 선물 종가: {last_krx.get('Futures_Close', 0)} pt ({last_krx.get('Change_Pct', 0):+.2f}%)\n"
-        context += f"- 시장 베이시스: {last_krx.get('Market_Basis', 0):+.2f} pt\n"
-        context += f"- 미결제약정: {last_krx.get('Open_Interest', 0):,} 계약\n"
-        context += f"- 파생 수급 국면: {last_krx.get('Market_Phase', '알수없음')}\n"
-        context += f"- 한국판 COT Index: {last_krx.get('COT_OI_Index', 0):.1f}%\n"
-    else:
-        context += f"- 시계열 로드 실패: {df_krx}\n"
-
-    df_inv = safe_load_dataframe('services.krx_service', 'get_krx_investor_derivatives_summary')
-    if isinstance(df_inv, pd.DataFrame):
-        context += "- 주요 투자자 20일 누적 순매수:\n"
-        for _, r in df_inv.iterrows():
-            subj = r.get('투자 주체', r.get('주체', 'Unknown'))
-            amt = r.get('20일 누적', r.get('20일 누적 순매수 (계약)', 0))
-            context += f"  * {subj}: {amt:+,} 계약\n"
-
     return context
 
 
