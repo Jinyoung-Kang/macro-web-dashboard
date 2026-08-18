@@ -10,7 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
-from services.radar_service import get_market_radar_scanner, get_stock_cumulative_flow_from_base
+from services.radar_service import get_market_radar_scanner, get_stock_cumulative_flow_from_base, PYKRX_AVAILABLE
 
 def render_radar_view():
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
@@ -41,26 +41,26 @@ def render_radar_view():
         with c3:
             trade_sel = st.selectbox("매매 방향", options=["순매수", "순매도"], index=0, key="r_trade")
         with c4:
-            # [요구사항] 사용자가 직접 원하는 날짜를 선택하여 조회
             target_date = st.date_input("조회 기준일자", value=today_date, max_value=today_date, key="r_date")
         with c5:
             top_n = st.selectbox("표시 수", options=[15, 30, 50], index=1, key="r_top")
 
         market_key = "KOSPI" if "KOSPI" in market_sel else "KOSDAQ"
         
-        # 선택한 날짜 기준으로 데이터 수신
         df_radar = get_market_radar_scanner(target_date_obj=target_date, market=market_key, investor=investor_sel, trade_type=trade_sel, top_n=top_n)
 
         if df_radar.empty:
-            st.error(f"""
-            ❌ **{target_date.strftime('%Y-%m-%d')} 기준 수급 데이터가 없습니다.**
-            
-            **[체크포인트]**:
-            1. **주말 및 공휴일**: 선택하신 날짜가 주말 또는 장 휴일인 경우 거래소 확정 원장이 존재하지 않습니다. 평일 날짜를 선택해 주세요.
-            2. **실시간 원장 준비 중**: 당일 장 중 실시간 데이터는 거래소 집계 주기에 따라 일부 지연될 수 있습니다.
-            """)
+            if not PYKRX_AVAILABLE:
+                st.error("""
+                ❌ **필수 라이브러리(`pykrx`) 누락 오류**
+                
+                과거 날짜 및 정확한 장마감 수급 데이터를 가져오기 위한 필수 패키지가 없습니다.
+                **해결 방법**: `requirements.txt` 파일 맨 아래에 `pykrx`를 추가하고 앱을 재부팅해 주세요.
+                """)
+            else:
+                st.warning(f"⚠️ **{target_date.strftime('%Y-%m-%d')} 기준 수급 데이터가 없습니다.**\n\n휴장일(주말/공휴일)이거나, 아직 거래소 원장 데이터가 업데이트되지 않았습니다.")
         else:
-            data_source = df_radar["데이터_출처"].iloc[0] if "데이터_출처" in df_radar.columns else "공식 거래소 API"
+            data_source = df_radar["데이터_출처"].iloc[0] if "데이터_출처" in df_radar.columns else "공식 거래소"
             top1 = df_radar.iloc[0]
             total_top_amt = df_radar["순매수대금(억)"].sum()
             
@@ -131,7 +131,6 @@ def render_radar_view():
                 key="cum_stock"
             )
         with rc2:
-            # [요구사항] 사용자가 기준일(0점 시작점)을 직접 선택
             default_start = today_date - timedelta(days=30)
             base_start_date = st.date_input("누적 기준 시작일 (0점 설정)", value=default_start, max_value=today_date, key="cum_start")
         with rc3:
