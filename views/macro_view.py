@@ -1,21 +1,21 @@
 """
 views/macro_view.py
-거시경제 매크로 지표 대시보드
+거시경제 매크로 지표 대시보드 뷰
 """
-import streamlit as st
-import plotly.graph_objects as go
-import pandas as pd
-import yfinance as yf
-import pytz
 from datetime import datetime
-from config import MACRO_CATEGORIES, SPREAD_TABLE_DATA, RISK_MODEL_TABLE
+import pandas as pd
+import plotly.graph_objects as go
+import pytz
+import streamlit as st
+import yfinance as yf
+from config import MACRO_CATEGORIES, RISK_MODEL_TABLE, SPREAD_TABLE_DATA
 from services.macro_service import (
-    get_collected_macro_data,
-    generate_briefing_text,
-    fetch_ticker_data,
-    fetch_fred_series,
+    clean_tag_ui,
     fetch_fred_cp_spread,
-    clean_tag_ui
+    fetch_fred_series,
+    fetch_ticker_data,
+    generate_briefing_text,
+    get_collected_macro_data,
 )
 
 @st.cache_data(ttl=60)
@@ -27,6 +27,7 @@ def get_us_market_status() -> str:
         return "마감"
     except:
         return "마감"
+
 
 def inject_market_status(name: str) -> str:
     now = datetime.now(pytz.timezone('Asia/Seoul'))
@@ -85,12 +86,9 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
         st.title("📊 Global Macro Dashboard")
         st.caption(f"최근 데이터 갱신 시각: {now_str_kst} (KST) | 갱신 주기: {refresh_interval}초")
 
-    # ==============================================================================
-    # 우측 상단 나란히 2개의 버튼 배치 (버튼 1 아래에 버튼 2 위치)
-    # ==============================================================================
+    # 우측 상단 브리핑 팝오버 버튼 2개
     with header_right:
         st.write("")
-        # 1. 기존 일반 텍스트 브리핑 버튼
         with st.popover("📋 텍스트 브리핑 보기 / 복사", use_container_width=True):
             st.markdown("**현재 시세 텍스트 종합 브리핑**")
             st.caption("우측 상단 복사 아이콘(📋)을 눌러 즉시 복사하세요.")
@@ -98,7 +96,6 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
             
         st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
             
-        # 2. 신규 AI 통합 브리핑 버튼 (버튼 1 바로 밑에 생성)
         with st.popover("🤖 AI로 텍스트 브리핑 보기 / 복사", use_container_width=True):
             st.markdown("**🤖 AI 기반 통합 데이터 브리핑**")
             st.caption(f"대시보드 전역의 최신 데이터를 취합하여 즉시 분석합니다.\n(기준 시각: {now_str_kst})")
@@ -227,7 +224,7 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
 
     st.divider()
 
-    # 3. 신용 리스크, 은행권 및 시장 변동성
+    # 3. 신용 리스크, 은행권 및 시장 변동성 (MOVE 무중단 렌더링)
     st.subheader("⚡ 신용 리스크, 은행권 및 시장 변동성 (Credit & Liquidity Risk)")
     st.caption("주식·채권 가격 변동성, 기업 부도 위험(HY OAS), 글로벌 은행권 단기 자금경색(3M CP) 및 종합 금융스트레스(STLFSI4)를 모니터링합니다.")
 
@@ -249,12 +246,12 @@ def render_macro_view(now_str_kst: str, refresh_interval: int):
             m_curr = move_hist['Close'].iloc[-1]
             m_prev = move_hist['Close'].iloc[-2]
             m_delta = m_curr - m_prev
-            m_pct = (m_delta / m_prev) * 100
+            m_pct = (m_delta / m_prev) * 100 if m_prev != 0 else 0.0
             m_status, m_color = ("안정", "green") if m_curr < 80 else ("정상", "blue") if m_curr <= 120 else ("경계", "orange") if m_curr <= 140 else ("위기", "red")
             st.metric("ICE BofA MOVE (채권 변동성) :gray[[지연/마감]]", f"{m_curr:.2f}", f"{m_delta:+.2f} ({m_pct:+.2f}%)")
             st.markdown(f"상태: :{m_color}[**{m_status}**] (전일: `{m_prev:.2f}`)")
         else:
-            st.metric("ICE BofA MOVE", "로드 실패")
+            st.metric("ICE BofA MOVE", "동기화 대기 중")
 
     with col_h:
         if hy_df is not None and len(hy_df) >= 2:
