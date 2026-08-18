@@ -208,8 +208,19 @@ def render_liquidity_view():
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                 )
 
-                fig_overlay.update_yaxes(title_text="순유동성 ($T)", secondary_y=False, gridcolor="#21262D", tickfont=dict(color="#00D2D3"), titlefont=dict(color="#00D2D3"))
-                fig_overlay.update_yaxes(title_text=selected_name, secondary_y=True, gridcolor="#21262D", tickfont=dict(color="#FF9F43"), titlefont=dict(color="#FF9F43"))
+                # [수정 지점]: titlefont 대신 최신 Plotly 호환 title=dict(...) 및 tickfont 적용
+                fig_overlay.update_yaxes(
+                    title=dict(text="순유동성 ($T)", font=dict(color="#00D2D3")),
+                    secondary_y=False,
+                    gridcolor="#21262D",
+                    tickfont=dict(color="#00D2D3")
+                )
+                fig_overlay.update_yaxes(
+                    title=dict(text=selected_name, font=dict(color="#FF9F43")),
+                    secondary_y=True,
+                    gridcolor="#21262D",
+                    tickfont=dict(color="#FF9F43")
+                )
 
                 st.plotly_chart(fig_overlay, use_container_width=True)
             else:
