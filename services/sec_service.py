@@ -22,9 +22,8 @@ logger = logging.getLogger(__name__)
 # 1. SEC 전용 강행 돌파 통신 세션 설정 (Timeout, Rate Limit 완벽 방어)
 # ==============================================================================
 def get_sec_session() -> requests.Session:
-    """SEC EDGAR의 엄격한 연결 끊김 현상을 방어하기 위한 강력한 세션 생성기"""
+    """SEC EDGAR의 연결 끊김 및 Rate Limit을 방어하기 위한 세션 생성기"""
     session = requests.Session()
-    # 타임아웃(Read timed out) 및 접속 거부 시 최대 5회 기하급수적 재시도(Exponential Backoff)
     retries = Retry(
         total=5,
         backoff_factor=1.5,
@@ -33,7 +32,7 @@ def get_sec_session() -> requests.Session:
     )
     session.mount("https://", HTTPAdapter(max_retries=retries))
     session.headers.update({
-        "User-Agent": "Personal Research Project research@example.com",
+        "User-Agent": "MacroQuantResearchApp/3.0 (research_analytics@macrofintechhub.com)",
         "Accept-Encoding": "gzip, deflate",
         "Host": "www.sec.gov",
     })
@@ -41,7 +40,7 @@ def get_sec_session() -> requests.Session:
 
 
 # ==============================================================================
-# 2. 통합 13F 분기 데이터 크롤러 (콤마 제거 수치 변환 및 무적 XML 파서 적용)
+# 2. 통합 13F 분기 데이터 크롤러 (Type 컬럼 검색 및 콤마 제거 파싱)
 # ==============================================================================
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
@@ -50,7 +49,8 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
     [(df, meta_info), (df_prev, meta_info_prev), ...] 형태로 반환
     """
     session = get_sec_session()
-    cik_padded = str(cik).zfill(10)
+    clean_cik = str(cik).lstrip("0")
+    cik_padded = clean_cik.zfill(10)
     base_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik_padded}&type=13F-HR&dateb=&owner=include&count=40"
 
     try:
@@ -62,7 +62,7 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
     soup = BeautifulSoup(res.text, "html.parser")
     tables = soup.find_all("table", class_="tableFile2")
     if not tables:
-        return None, "해당 기관의 13F-HR 공시 내역을 찾을 수 없습니다."
+        return None, f"해당 CIK({cik})의 13F-HR 검색 결과 테이블을 찾을 수 없습니다."
 
     history_links = []
     rows = tables[0].find_all("tr")[1:]
@@ -97,22 +97,14 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
         doc_table = doc_soup.find("table", class_="tableFile")
         xml_url = None
 
-        # =====================================================================
-        # [핵심 버그 수정 지점]
-        # EDGAR 문서 인덱스 테이블 컬럼 순서: Seq(0) | Description(1) | Document(2) | Type(3) | Size(4)
-        # 실제 SEC 페이지에서 Description(c[1])은 대부분 빈 문자열입니다.
-        # "INFORMATION TABLE" 문구는 Description이 아니라 Type(c[3])에 있으므로,
-        # 기존 c[1] 검사는 절대 매치되지 않고 .xml로 끝나는 첫 파일(primary_doc.xml,
-        # 커버페이지/서명/요약만 있고 종목 데이터 없음)을 잘못 채택하게 됩니다.
-        # => Type 컬럼(c[3])과 파일명을 함께 확인하고, primary_doc.xml은 fallback에서 제외합니다.
-        # =====================================================================
+        # 1. Type 컬럼(c[3]) 및 파일명 검사로 실제 종목 테이블(information table) 타겟팅
         if doc_table:
             for r in doc_table.find_all("tr")[1:]:
                 c = r.find_all("td")
                 if len(c) >= 4:
                     fname = c[2].find("a", href=True)
                     if fname and fname.text.strip().lower().endswith(".xml"):
-                        doc_type_col = c[3].text.strip().lower()  # [수정] c[1] -> c[3] (Type 컬럼)
+                        doc_type_col = c[3].text.strip().lower()
                         file_name_lower = fname.text.strip().lower()
                         href = fname['href']
                         full_href = href if href.startswith("http") else "https://www.sec.gov" + href
@@ -126,11 +118,10 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
                         if is_info_table:
                             xml_url = full_href
                             break
-                        # [수정] primary_doc.xml(커버페이지 전용)은 fallback 후보에서 제외
                         if not xml_url and "primary_doc" not in file_name_lower:
                             xml_url = full_href
 
-        # 테이블에서 못 찾을 경우 페이지 전체에서 XML 링크 검색 (primary_doc 제외)
+        # 2. 테이블 미존재 시 페이지 전체에서 primary_doc 제외하고 XML 링크 탐색
         if not xml_url:
             for a in doc_soup.find_all("a", href=True):
                 href = a['href']
@@ -151,9 +142,7 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
             logger.warning(f"13F XML 다운로드 타임아웃 ({filing_date}): {e}")
             continue
 
-        # =====================================================================
         # XML 파싱 (네임스페이스 무시 및 콤마 완벽 제거)
-        # =====================================================================
         try:
             root = ET.fromstring(xml_res.content)
             data = []
@@ -181,7 +170,6 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
                             except (ValueError, TypeError):
                                 shares = 0.0
 
-                    # 콤마 제거 후 부동소수점 변환
                     try:
                         val = float(val_text.replace(",", "").strip()) if val_text else 0.0
                     except (ValueError, TypeError):
@@ -204,8 +192,8 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
 
         df = pd.DataFrame(data)
 
-        # 2023년 이전 공시 파일이거나 합산액이 $10M 미만인 경우 천 달러 단위로 간주하고 보정
-        if df['value'].sum() > 0 and df['value'].sum() < 10_000_000:
+        # 2023년 이전 공시 파일이거나 합산액이 $100M 미만인 경우 천 달러 단위로 간주하고 보정
+        if df['value'].sum() > 0 and df['value'].sum() < 100_000_000:
             df['value'] = df['value'] * 1000.0
 
         # 종목명(CUSIP 기준)으로 그룹화하여 옵션/본주 분산 표기 합산
@@ -244,7 +232,38 @@ def fetch_sec_13f_multi_quarters(cik: str, max_quarters: int = 4):
 
 
 # ==============================================================================
-# 3. 전체 기관 일괄 로딩 (Streamlit 캐시 활용)
+# 3. 직전 분기 대비 매수/매도 액션 분류 함수 (ImportError 해결 핵심)
+# ==============================================================================
+def classify_qoq_action(row):
+    """직전 분기 대비 비중 증감폭을 기준으로 매수/매도/유지 액션 분류"""
+    diff = row.get('weight_diff', 0.0) if isinstance(row, dict) else row['weight_diff']
+    shares_curr = row.get('shares_curr', 0.0) if isinstance(row, dict) else row['shares_curr']
+    shares_prev = row.get('shares_prev', 0.0) if isinstance(row, dict) else row['shares_prev']
+    
+    if shares_prev == 0 and shares_curr > 0:
+        return "🆕 신규 매수 (New)"
+    elif shares_curr == 0 and shares_prev > 0:
+        return "❌ 전량 매도 (Closed)"
+    elif diff > 0.05:
+        return "📈 비중 확대 (Added)"
+    elif diff < -0.05:
+        return "📉 비중 축소 (Reduced)"
+    else:
+        return "⚪ 유지 (Unchanged)"
+
+
+def format_currency(val):
+    """달러 단위 포맷팅"""
+    if val >= 1e9:
+        return f"${val/1e9:,.2f}B"
+    elif val >= 1e6:
+        return f"${val/1e6:,.2f}M"
+    else:
+        return f"${val:,.0f}"
+
+
+# ==============================================================================
+# 4. 전체 기관 일괄 로딩 및 교집합 헬퍼 함수
 # ==============================================================================
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_all_institutions_data():
@@ -304,7 +323,7 @@ def calculate_consensus(inst_data):
 
 
 def get_top_holdings_by_inst(inst_data, inst_name, top_n=20):
-    """특정 기관의 상위 N개 종목을 보기 좋은 형태로 반환"""
+    """특정 기관의 상위 N개 종목을 포맷팅하여 반환"""
     if inst_name not in inst_data:
         return pd.DataFrame()
 
@@ -312,7 +331,7 @@ def get_top_holdings_by_inst(inst_data, inst_name, top_n=20):
     df_display = df[['name', 'cusip', 'weight', 'value', 'shares']].copy()
     df_display.columns = ['종목명 (Issuer)', 'CUSIP', '비중 (%)', '평가액 ($)', '보유 주식수']
     df_display['비중 (%)'] = df_display['비중 (%)'].map('{:.2f}%'.format)
-    df_display['평가액 ($)'] = df_display['평가액 ($)'].map('{:,.0f}'.format)
+    df_display['평가액 ($)'] = df_display['평가액 ($)'].map('${:,.0f}'.format)
     df_display['보유 주식수'] = df_display['보유 주식수'].map('{:,.0f}'.format)
 
     return df_display
