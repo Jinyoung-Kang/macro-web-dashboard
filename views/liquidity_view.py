@@ -1,180 +1,262 @@
-# views/liquidity_view.py
-import streamlit as st
-import plotly.graph_objects as go
+"""
+views/liquidity_view.py
+🏛️ 연준 순유동성 트래커 (Fed Net Liquidity Tracker) 뷰
+연준 총자산, TGA, ON RRP 잔고 및 증시 지수 오버레이 상관관계 분석
+"""
+from datetime import datetime
 import pandas as pd
-from services.liquidity_service import get_net_liquidity_data
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pytz
+import streamlit as st
+import yfinance as yf
+from services.liquidity_service import get_fed_liquidity_data
+
+@st.cache_data(ttl=60)
+def fetch_overlay_index_data(ticker: str, start_date: str) -> pd.DataFrame:
+    """비교할 자산 지수의 시계열 수집"""
+    try:
+        tk = yf.Ticker(ticker)
+        df = tk.history(start=start_date)
+        if df is not None and not df.empty:
+            df = df.dropna(subset=['Close'])
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
+            df.index = df.index.normalize()
+            return df[['Close']]
+    except Exception:
+        pass
+    return None
+
 
 def render_liquidity_view():
-    st.title("🏢 연준 순유동성 트래커 (Fed Net Liquidity Tracker)")
-    st.caption("연준 총자산에서 재무부 일반계좌(TGA)와 역레포(ON RRP)를 차감한 실제 금융시장 가용 유동성을 모니터링합니다.")
+    now = datetime.now(pytz.timezone('Asia/Seoul'))
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S KST")
 
-    with st.spinner("연준(Fed) 및 재무부 유동성 데이터를 분석 중입니다..."):
-        df, metrics = get_net_liquidity_data()
+    st.markdown("""
+    <div style="padding: 4px 0 12px 0;">
+        <h2 style="margin:0; font-weight: 700; color: #F0F6FC;">
+            🏛️ 연준 순유동성 트래커 (Fed Net Liquidity Tracker)
+        </h2>
+        <p style="margin: 4px 0 0 0; color: #8B949E; font-size: 0.92rem;">
+            연준 총자산에서 재무부 일반계좌(TGA)와 역레포(ON RRP)를 차감한 실제 금융시장 가용 유동성을 모니터링합니다.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    if df is None or not metrics:
+    with st.spinner("연준(FRED)으로부터 최신 순유동성 데이터를 수집 및 연산하고 있습니다..."):
+        df_liq = get_fed_liquidity_data(period_years=10)
+
+    if df_liq is None or df_liq.empty:
         st.error("유동성 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.")
         return
 
-    # 1. 상단 핵심 지표 요약 메트릭 카드
+    # 최신 수치 및 변동폭 계산
+    latest = df_liq.iloc[-1]
+    prev_1w = df_liq.iloc[-2] if len(df_liq) >= 2 else latest
+    prev_1m = df_liq.iloc[-5] if len(df_liq) >= 5 else prev_1w
+    
+    # YTD (연초 대비)
+    curr_year = latest.name.year
+    df_curr_year = df_liq[df_liq.index.year == curr_year]
+    ytd_base = df_curr_year.iloc[0] if not df_curr_year.empty else latest
+
+    net_curr_t = latest['Net_Liquidity_T']
+    net_diff_1w_b = (latest['Net_Liquidity_T'] - prev_1w['Net_Liquidity_T']) * 1000.0
+    net_diff_1m_b = (latest['Net_Liquidity_T'] - prev_1m['Net_Liquidity_T']) * 1000.0
+    net_diff_ytd_b = (latest['Net_Liquidity_T'] - ytd_base['Net_Liquidity_T']) * 1000.0
+
+    walcl_curr_t = latest['WALCL_T']
+    tga_curr_b = latest['WTREGEN_B']
+    tga_curr_t = latest['WTREGEN_T']
+    rrp_curr_b = latest['RRP_B']
+
+    latest_date_str = latest.name.strftime('%Y-%m-%d')
+
+    # ==========================================================================
+    # 1. 상단 핵심 메트릭 카드 (4열 배치)
+    # ==========================================================================
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric(
-        "현재 연준 순유동성",
-        f"${metrics['net_liq_t']:.3f} T",
-        delta=f"{metrics['net_liq_1w_delta']:+.1f} B (1주)",
-        help="연준 총자산 - TGA 잔고 - 역레포 잔고"
-    )
-    m1.caption(f"1개월 변동: `{metrics['net_liq_1m_delta']:+.1f} B` | 연초비: `{metrics['net_liq_ytd_delta']:+.1f} B`")
+    with m1:
+        st.metric(
+            label="현재 연준 순유동성",
+            value=f"${net_curr_t:.3f} T",
+            delta=f"{net_diff_1w_b:+.1f} B (1주)",
+            help="연준 총자산(WALCL) - 재무부 TGA - 역레포(ON RRP)"
+        )
+        st.caption(f"1개월 변동: `{net_diff_1m_b:+.1f} B` | 연초비: `{net_diff_ytd_b:+.1f} B`")
 
-    m2.metric(
-        "연준 총자산 (WALCL)",
-        f"${metrics['walcl_t']:.3f} T",
-        help="연준 대차대조표 총자산 규모 (양적긴축 QT 진행 척도)"
-    )
-    m2.caption(f"기준일: {metrics['latest_date']}")
+    with m2:
+        st.metric(
+            label="연준 총자산 (WALCL)",
+            value=f"${walcl_curr_t:.3f} T",
+            help="연준의 전체 대차대조표 자산 규모"
+        )
+        st.caption(f"기준일: {latest_date_str}")
 
-    m3.metric(
-        "재무부 일반계좌 (TGA)",
-        f"${metrics['tga_b']:,.1f} B",
-        help="미국 재무부의 국고 계좌 잔고. 정부가 지출하면 유동성 방출(+), 국채 발행으로 채우면 유동성 흡수(-)"
-    )
-    m3.caption(f"약 ${metrics['tga_b']/1000.0:.2f} T")
+    with m3:
+        st.metric(
+            label="재무부 일반계좌 (TGA)",
+            value=f"${tga_curr_b:.1f} B",
+            help="미국 재무부의 연준 현금 계좌 (증가 시 시중 유동성 흡수)"
+        )
+        st.caption(f"약 ${tga_curr_t:.2f} T")
 
-    m4.metric(
-        "역레포 잔고 (ON RRP)",
-        f"${metrics['rrp_b']:,.1f} B",
-        help="시중 MMF 등이 연준에 맡긴 잉여 자금. 잔고가 줄어들면 시중 유동성 공급(+)"
-    )
-    m4.caption(f"약 ${metrics['rrp_b']/1000.0:.2f} T")
+    with m4:
+        st.metric(
+            label="역레포 잔고 (ON RRP)",
+            value=f"${rrp_curr_b:.1f} B",
+            help="시중 유동성이 연준에 예치된 잔고 (감소 시 시중 유동성 방출)"
+        )
+        st.caption(f"약 ${rrp_curr_b/1000.0:.2f} T")
 
-    st.divider()
+    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
 
-    # 2. 탭별 상세 시각화
+    # ==========================================================================
+    # 2. 탭별 상세 시각화 & 상관관계 분석
+    # ==========================================================================
     tab1, tab2, tab3 = st.tabs([
         "📈 순유동성 vs 증시 지수 오버레이",
         "📊 순유동성 3대 구성요소 추이",
         "📖 연준 순유동성 작동 원리 & 가이드"
     ])
 
-    # TAB 1: 오버레이 비교 차트
+    # --------------------------------------------------------------------------
+    # TAB 1: 증시 지수 오버레이
+    # --------------------------------------------------------------------------
     with tab1:
         st.markdown("#### ⚙️ 오버레이 차트 조건 설정")
-        col_c1, col_c2 = st.columns([1, 1])
-        with col_c1:
-            index_choice = st.selectbox("비교할 주가지수 선택", ["S&P 500 (^GSPC)", "나스닥 100 (^NDX)"], index=0)
-            index_col = "SP500" if "S&P 500" in index_choice else "NASDAQ"
-        with col_c2:
-            period_choice = st.selectbox("조회 기간 선택", ["1년", "2년", "3년", "5년", "전체 (2020~)"], index=1)
+        c1, c2 = st.columns([1.5, 1.5])
+        with c1:
+            INDEX_OPTIONS = {
+                "S&P 500 (^GSPC)": "^GSPC",
+                "나스닥 종합 (^IXIC)": "^IXIC",
+                "비트코인 (BTC-USD)": "BTC-USD",
+                "다우존스 산업평균 (^DJI)": "^DJI",
+                "러셀 2000 (^RUT)": "^RUT",
+                "KOSPI 200 (^KS200)": "^KS200"
+            }
+            selected_name = st.selectbox("비교할 주가지수 선택", options=list(INDEX_OPTIONS.keys()), index=0)
+            selected_ticker = INDEX_OPTIONS[selected_name]
 
-        # 기간 필터링
-        now = pd.Timestamp.now()
-        if period_choice == "1년":
-            sub_df = df[df.index >= (now - pd.DateOffset(years=1))]
-        elif period_choice == "2년":
-            sub_df = df[df.index >= (now - pd.DateOffset(years=2))]
-        elif period_choice == "3년":
-            sub_df = df[df.index >= (now - pd.DateOffset(years=3))]
-        elif period_choice == "5년":
-            sub_df = df[df.index >= (now - pd.DateOffset(years=5))]
+        with c2:
+            PERIOD_MAP = {
+                "1년": 365,
+                "2년": 730,
+                "3년": 1095,
+                "5년": 1825,
+                "10년": 3650
+            }
+            selected_period_label = st.selectbox("조회 기간 선택", options=list(PERIOD_MAP.keys()), index=1)
+            days_back = PERIOD_MAP[selected_period_label]
+
+        cutoff_date = pd.Timestamp.now() - pd.DateOffset(days=days_back)
+        df_liq_sub = df_liq[df_liq.index >= cutoff_date].copy()
+        
+        start_str = cutoff_date.strftime('%Y-%m-%d')
+        df_index = fetch_overlay_index_data(selected_ticker, start_str)
+
+        if df_index is not None and not df_index.empty:
+            merged_overlay = pd.merge(
+                df_liq_sub[['Net_Liquidity_T']],
+                df_index[['Close']],
+                left_index=True,
+                right_index=True,
+                how='inner'
+            ).dropna()
+
+            if not merged_overlay.empty:
+                corr_val = merged_overlay['Net_Liquidity_T'].corr(merged_overlay['Close'])
+                corr_str = f"{corr_val:+.2f}" if not pd.isna(corr_val) else "N/A"
+                
+                st.info(f"💡 **선택 기간({selected_period_label}) 동안 연준 순유동성과 {selected_name} 간의 상관계수는 `{corr_str}` 입니다.** (1.0에 가까울수록 강한 양의 상관관계)")
+
+                fig_overlay = make_subplots(specs=[[{"secondary_y": True}]])
+
+                # 순유동성 (좌측 Y축)
+                fig_overlay.add_trace(
+                    go.Scatter(
+                        x=merged_overlay.index,
+                        y=merged_overlay['Net_Liquidity_T'],
+                        name="연준 순유동성 ($T)",
+                        line=dict(color="#00D2D3", width=2.5),
+                        mode="lines"
+                    ),
+                    secondary_y=False
+                )
+
+                # 비교 지수 (우측 Y축)
+                fig_overlay.add_trace(
+                    go.Scatter(
+                        x=merged_overlay.index,
+                        y=merged_overlay['Close'],
+                        name=selected_name,
+                        line=dict(color="#FF9F43", width=2.0),
+                        mode="lines"
+                    ),
+                    secondary_y=True
+                )
+
+                fig_overlay.update_layout(
+                    template="plotly_dark",
+                    paper_bgcolor="#0D1117",
+                    plot_bgcolor="#161B22",
+                    height=520,
+                    title=f"연준 순유동성 vs {selected_name} 동행 추이 ({selected_period_label})",
+                    hovermode="x unified",
+                    margin=dict(l=20, r=20, t=50, b=20),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+
+                fig_overlay.update_yaxes(title_text="순유동성 ($T)", secondary_y=False, gridcolor="#21262D", tickfont=dict(color="#00D2D3"), titlefont=dict(color="#00D2D3"))
+                fig_overlay.update_yaxes(title_text=selected_name, secondary_y=True, gridcolor="#21262D", tickfont=dict(color="#FF9F43"), titlefont=dict(color="#FF9F43"))
+
+                st.plotly_chart(fig_overlay, use_container_width=True)
+            else:
+                st.warning("비교 지수와 순유동성 시계열 일치 데이터가 부족합니다.")
         else:
-            sub_df = df
+            st.warning(f"{selected_name} 시세 데이터를 불러오지 못했습니다.")
 
-        # 상관계수 계산
-        valid_corr_df = sub_df.dropna(subset=['Net_Liquidity_T', index_col])
-        corr_val = valid_corr_df['Net_Liquidity_T'].corr(valid_corr_df[index_col]) if len(valid_corr_df) > 10 else 0
+    # --------------------------------------------------------------------------
+    # TAB 2: 3대 구성요소 추이
+    # --------------------------------------------------------------------------
+    with tab_2 := tab2:
+        st.markdown("#### 📊 순유동성 3대 구성요소 분해 추이")
+        sub_period = st.selectbox("분해 차트 기간 선택", ["1년", "2년", "3년", "5년", "10년"], index=3, key="sub_period_sel")
+        days_sub = PERIOD_MAP[sub_period]
+        cutoff_sub = pd.Timestamp.now() - pd.DateOffset(days=days_sub)
+        df_sub = df_liq[df_liq.index >= cutoff_sub]
 
-        st.info(f"💡 선택 기간(`{period_choice}`) 동안 **연준 순유동성**과 **{index_choice}** 간의 상관계수는 **`{corr_val:.2f}`** 입니다. (1.0에 가까울수록 강한 양의 상관관계)", icon="ℹ️")
+        fig_comp = go.Figure()
+        fig_comp.add_trace(go.Scatter(x=df_sub.index, y=df_sub['WALCL_T'], name="연준 총자산 (WALCL, $T)", line=dict(color="#3B82F6", width=2)))
+        fig_comp.add_trace(go.Scatter(x=df_sub.index, y=df_sub['WTREGEN_T'], name="재무부 일반계정 (TGA, $T)", line=dict(color="#F59E0B", width=2)))
+        fig_comp.add_trace(go.Scatter(x=df_sub.index, y=df_sub['RRP_B']/1000.0, name="역레포 잔고 (ON RRP, $T)", line=dict(color="#10B981", width=2)))
+        fig_comp.add_trace(go.Scatter(x=df_sub.index, y=df_sub['Net_Liquidity_T'], name="연준 순유동성 ($T)", line=dict(color="#00D2D3", width=2.5, dash="solid")))
 
-        fig_overlay = go.Figure()
-        # 좌측 Y축: 순유동성
-        fig_overlay.add_trace(go.Scatter(
-            x=sub_df.index,
-            y=sub_df['Net_Liquidity_T'],
-            mode='lines',
-            name='연준 순유동성 ($T)',
-            line=dict(color='#00D2FF', width=2.5),
-            fill='tozeroy',
-            fillcolor='rgba(0, 210, 255, 0.08)'
-        ))
-        # 우측 Y축: 주가지수
-        if index_col in sub_df.columns:
-            fig_overlay.add_trace(go.Scatter(
-                x=sub_df.index,
-                y=sub_df[index_col],
-                mode='lines',
-                name=index_choice,
-                line=dict(color='#FFA726', width=2),
-                yaxis='y2'
-            ))
-
-        fig_overlay.update_layout(
-            title=f"연준 순유동성 vs {index_choice} 동행 추이 ({period_choice})",
+        fig_comp.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#0D1117",
+            plot_bgcolor="#161B22",
+            height=480,
+            title=f"연준 순유동성 3대 구성요소 과거 추이 ({sub_period})",
             xaxis_title="일자",
-            yaxis=dict(
-                title=dict(text="순유동성 ($T)", font=dict(color="#00D2FF")),
-                tickfont=dict(color="#00D2FF")
-            ),
-            yaxis2=dict(
-                title=dict(text=index_choice, font=dict(color="#FFA726")),
-                tickfont=dict(color="#FFA726"),
-                overlaying="y",
-                side="right"
-            ),
+            yaxis_title="규모 ($T, 조 달러)",
             hovermode="x unified",
             margin=dict(l=20, r=20, t=50, b=20),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
-        st.plotly_chart(fig_overlay, use_container_width=True)
-
-    # TAB 2: 구성요소 개별 분해 추이
-    with tab2:
-        st.markdown("#### 📊 순유동성 3대 구성요소 추이 ($T, 조 달러 기준)")
-        fig_comp = go.Figure()
-        fig_comp.add_trace(go.Scatter(x=sub_df.index, y=sub_df['WALCL_T'], mode='lines', name='연준 총자산 (WALCL)', line=dict(color='#3B82F6', width=2)))
-        fig_comp.add_trace(go.Scatter(x=sub_df.index, y=sub_df['TGA_T'], mode='lines', name='재무부 TGA 잔고', line=dict(color='#EF4444', width=2)))
-        fig_comp.add_trace(go.Scatter(x=sub_df.index, y=sub_df['RRP_T'], mode='lines', name='역레포(ON RRP) 잔고', line=dict(color='#8B5CF6', width=2)))
-        fig_comp.add_trace(go.Scatter(x=sub_df.index, y=sub_df['Net_Liquidity_T'], mode='lines', name='최종 순유동성 (합산)', line=dict(color='#10B981', width=3, dash='dot')))
-
-        fig_comp.update_layout(
-            title=f"연준 순유동성 구성 항목 분해 추이 ({period_choice})",
-            xaxis_title="일자",
-            yaxis_title="금액 ($T, 조 달러)",
-            hovermode="x unified",
-            margin=dict(l=20, r=20, t=40, b=20),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
         st.plotly_chart(fig_comp, use_container_width=True)
 
-    # TAB 3: 해석 가이드 & 메커니즘
-    with tab3:
-        st.markdown("#### 📚 연준 순유동성(Net Liquidity)이란?")
+    # --------------------------------------------------------------------------
+    # TAB 3: 작동 원리 가이드
+    # --------------------------------------------------------------------------
+    with tab_3 := tab3:
+        st.markdown("### 📖 연준 순유동성 (Fed Net Liquidity) 모델 가이드")
         st.markdown("""
-        전통적으로 시장은 연준의 기준금리에 주목하지만, **중기 증시(S&P 500 / 나스닥)의 밸류에이션과 방향성을 결정하는 실질적인 힘은 :blue-background['실제 시스템에 풀려 있는 달러 유동성의 크기']**입니다.
+        **연준 순유동성 공식**:
+        $$\\text{Net Liquidity} = \\text{연준 총자산 (WALCL)} - \\text{재무부 일반계좌 (TGA)} - \\text{역레포 잔고 (ON RRP)}$$
 
-        연준 순유동성은 다음 공식으로 산출됩니다:
+        * **1. 연준 총자산 (WALCL)**: 연준의 대차대조표 자산 규모로 양적완화(QE) 시 증가하고 양적긴축(QT) 시 감소합니다.
+        * **2. 재무부 일반계좌 (TGA)**: 미국 정부의 입출금 통장입니다. 국채 발행 및 세금 징수로 TGA가 증가하면 시중 유동성이 흡수(감소)되고, 정부 재정 지출로 TGA가 감소하면 시중에 유동성이 방출(증가)됩니다.
+        * **3. 역레포 잔고 (ON RRP)**: 시중 MMF 및 금융기관이 단기 잉여 자금을 연준에 맡기는 창구입니다. 역레포 잔고가 감소하면 시중 자산시장(증시 및 가상자산)으로 유동성이 유입됩니다.
         """)
-        st.latex(r"\text{Net Liquidity} = \text{Fed Total Assets (총자산)} - \text{TGA (재무부 국고)} - \text{ON RRP (역레포 잔고)}")
-
-        st.markdown("---")
-        st.markdown("#### 🔍 3대 핵심 변수의 메커니즘")
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown("##### 🏛️  1. 연준 총자산 (WALCL)")
-            st.markdown("• :orange[증가 시 ] : 양적완화(QE)로 시중에 직접 달러 공급 ➔ :green[**유동성 증가 (+)**]")
-            st.markdown("• :orange[감소 시 ] : 양적긴축(QT)으로 만기 채권 미재투자 ➔ :red[**유동성 흡수 (-)**]")
-
-        with c2:
-            st.markdown("##### 🏦 2. 재무부 일반계좌 (TGA)")
-            st.markdown("• :orange[잔고 증가 ] : 정부가 국채를 발행해 시장 돈을 흡수 ➔ :red[**유동성 감소 (-)**]")
-            st.markdown("• :orange[잔고 감소 ] : 정부가 재정 지출 및 보조금 집행 ➔ :green[**시장에 달러 방출 (+)**]")
-
-        with c3:
-            st.markdown("##### 🔄 3. 역레포 잔고 (ON RRP)")
-            st.markdown("• :orange[잔고 증가 ] : MMF가 돈을 굴릴 곳이 없어 연준에 예치 ➔ :red[**유동성 잠김 (-)**]")
-            st.markdown("• :orange[잔고 감소 ] : 예치금을 빼서 국채 매수 및 시중 투자 ➔ :green[**유동성 방출 (+)**]")
-
-        st.markdown("---")
-        st.markdown("#### 🎯 실전 투자 체크포인트")
-        st.markdown("1. :green[**순유동성 증가 국면**] : 주식 시장의 밸류에이션(PER) 확장 및 성장주/테크주 랠리 가능성 고조.")
-        st.markdown("2. :red[**순유동성 정체/감소 국면**] : 지수 상단 제한, 변동성 확대 및 방어주/현금 비중 확대 전략 유리.")
-        st.markdown("3. :orange[**TGA 재충전 구간 주의**] : 부채한도 협상 타결 직후 재무부가 대규모 국채를 발행할 때 증시 단기 조정 압력 빈번.")
