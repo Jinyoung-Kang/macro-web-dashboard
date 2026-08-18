@@ -195,7 +195,7 @@ def render_krx_cot_view():
         """)
 
     # ==========================================================================
-    # 3. 국면 매트릭스 & 포지션 테이블 (가로 스크롤 제거)
+    # 3. 국면 매트릭스 & 포지션 테이블
     # ==========================================================================
     col_left, col_right = st.columns([1.1, 1])
 
@@ -263,7 +263,7 @@ def render_krx_cot_view():
         )
 
     # ==========================================================================
-    # 4. AI 파생 수급 & 스마트머니 종합 진단 (심화 결론 포함)
+    # 4. AI 파생 수급 & 스마트머니 종합 진단 (마크다운 렌더링 정상화)
     # ==========================================================================
     st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
     st.markdown("#### 🤖 AI 파생 수급 & 스마트머니 종합 진단")
@@ -296,8 +296,7 @@ def render_krx_cot_view():
                - 대형주(반도체/금융/지수 ETF)와 중소형주에 대한 구체적인 매매 실행 타이밍(분할 매수/차익 실현/손절 기준)을 구체적인 조건과 함께 명시하라.
             """
             analysis_result = ask_investment_agent(prompt)
-            st.markdown(f"""
-            <div style="background-color:#161B22; border:1px solid #30363D; border-radius:8px; padding:20px; margin-top:10px; color:#C9D1D9; line-height:1.7;">
-                {analysis_result}
-            </div>
-            """, unsafe_allow_html=True)
+            
+            st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(analysis_result)
