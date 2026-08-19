@@ -32,51 +32,78 @@ def test_kis_connection():
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",  # 주식(J)
         "FID_COND_SCR_DIV_CODE": "16449",
-        "FID_INPUT_ISCD": "0000",       # 코스피(0000)
-        "FID_DIV_CLS_CODE": "1",        # 1: 금액정렬
+        "FID_INPUT_ISCD": "0000",       # 코스피 전체
+        "FID_DIV_CLS_CODE": "0",        # 0: 수량, 1: 금액
         "FID_RANK_SORT_CLS_CODE": "0",  # 0: 외인순매수
-        "FID_BLNG_CLS_CODE": "1",       # 1: 코스피 소속 (0건 반환 해결)
-        "FID_TRGT_CLS_CODE": "0",
-        "FID_TRGT_EXLS_CLS_CODE": "0",
-        "FID_INPUT_PRICE_1": "",
-        "FID_INPUT_PRICE_2": "",
-        "FID_VOL_CNT": "",
-        "FID_INPUT_DATE_1": ""
+        "FID_ETC_CLS_CODE": "0"         # 전체
     }
     try:
         res = call_kis_api(tr_id="FHPST01710000", endpoint="/uapi/domestic-stock/v1/quotations/foreign-institution-total", params=params)
         if res and res.get("rt_cd") == "0":
-            count = len(res.get("output", []))
-            if count > 0:
-                return True, f"정상 통신 성공 (조회된 상위 종목 수: {count}개)"
-            else:
-                return False, "통신 성공했으나 응답 데이터가 0건입니다."
-        elif res:
-            return False, f"KIS 서버 응답 에러: {res.get('msg1', str(res))}"
-        else:
-            return False, "KIS 서버 응답 없음"
+            output = res.get("output", [])
+            if len(output) > 0:
+                return True, f"정상 통신 성공 (조회된 상위 종목 수: {len(output)}개)"
+        
+        # 2차 시도: FHPST01740000
+        params_sub = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_COND_SCR_DIV_CODE": "16449",
+            "FID_INPUT_ISCD": "0000",
+            "FID_DIV_CLS_CODE": "0",
+            "FID_RANK_SORT_CLS_CODE": "0",
+            "FID_BLNG_CLS_CODE": "0",
+            "FID_TRGT_CLS_CODE": "0",
+            "FID_TRGT_EXLS_CLS_CODE": "0",
+            "FID_INPUT_PRICE_1": "",
+            "FID_INPUT_PRICE_2": "",
+            "FID_VOL_CNT": "",
+            "FID_INPUT_DATE_1": ""
+        }
+        res_sub = call_kis_api(tr_id="FHPST01740000", endpoint="/uapi/domestic-stock/v1/quotations/foreign-institution-daily-ranking", params=params_sub)
+        if res_sub and res_sub.get("rt_cd") == "0":
+            output_sub = res_sub.get("output", [])
+            if len(output_sub) > 0:
+                return True, f"정상 통신 성공 (FHPST01740000 조회 종목 수: {len(output_sub)}개)"
+
+        if res:
+            return False, f"KIS 서버 응답: {res.get('msg1', str(res))}"
+        return False, "KIS 서버 응답 없음"
     except Exception as e:
         return False, f"예외 발생: {str(e)}"
 
 
 def test_ls_connection():
-    body_params = {
-        "t1664InBlock": {
-            "gubun1": "1",  # 1: 코스피
-            "gubun2": "1",  # 1: 외국인
-            "gubun3": "1",  # 1: 순매수
+    body_params_1452 = {
+        "t1452InBlock": {
+            "gubun": "1",        # 코스피
+            "jnilgubun": "1",    # 당일
+            "paygubun": "2",     # 금액 기준
+            "ordergubun": "1",   # 순매수
             "cnt": 30
         }
     }
     try:
-        res = call_ls_api(tr_cd="t1664", tr_url="/stock/investor", body_params=body_params)
-        if res and "t1664OutBlock1" in res:
+        res = call_ls_api(tr_cd="t1452", tr_url="/stock/market-sum", body_params=body_params_1452)
+        if res and "t1452OutBlock1" in res and len(res["t1452OutBlock1"]) > 0:
+            count = len(res["t1452OutBlock1"])
+            return True, f"정상 통신 성공 (t1452 상위 종목 수: {count}개)"
+    except Exception:
+        pass
+
+    # 2차 시도: t1664
+    body_params_1664 = {
+        "t1664InBlock": {
+            "gubun1": "1", "gubun2": "1", "gubun3": "1", "cnt": 30
+        }
+    }
+    try:
+        res = call_ls_api(tr_cd="t1664", tr_url="/stock/investor", body_params=body_params_1664)
+        if res and "t1664OutBlock1" in res and len(res["t1664OutBlock1"]) > 0:
             count = len(res["t1664OutBlock1"])
-            return True, f"정상 통신 성공 (조회된 상위 종목 수: {count}개)"
+            return True, f"정상 통신 성공 (t1664 상위 종목 수: {count}개)"
         elif res:
-            return False, f"LS 서버 응답 에러: {res.get('rsp_msg', str(res))}"
-        else:
-            return False, "LS 서버 응답 없음"
+            return False, f"LS 서버 응답: {res.get('rsp_msg', str(res))}"
+        return False, "LS 서버 응답 없음"
     except Exception as e:
         return False, f"예외 발생: {str(e)}"
 
@@ -87,7 +114,6 @@ def test_ls_connection():
 def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     is_kospi = "KOSPI" in market.upper() or "코스피" in market
     fid_iscd = "0000" if is_kospi else "1001"
-    blng_code = "1" if is_kospi else "2"  # 1: 코스피, 2: 코스닥
     
     if investor == "외국인":
         rank_sort = "0" if trade_type == "순매수" else "1"
@@ -100,42 +126,110 @@ def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_t
         "FID_INPUT_ISCD": fid_iscd,
         "FID_DIV_CLS_CODE": "1",        # 1: 금액 기준 정렬
         "FID_RANK_SORT_CLS_CODE": rank_sort,
-        "FID_BLNG_CLS_CODE": blng_code, # 소속구분코드 지정
-        "FID_TRGT_CLS_CODE": "0",
-        "FID_TRGT_EXLS_CLS_CODE": "0",
-        "FID_INPUT_PRICE_1": "",
-        "FID_INPUT_PRICE_2": "",
-        "FID_VOL_CNT": "",
-        "FID_INPUT_DATE_1": ""
+        "FID_ETC_CLS_CODE": "0"
     }
     
     try:
         res = call_kis_api(tr_id="FHPST01710000", endpoint="/uapi/domestic-stock/v1/quotations/foreign-institution-total", params=params)
-        if res and res.get("rt_cd") == "0":
-            output = res.get("output", [])
-            if output:
-                records = []
-                for idx, row in enumerate(output[:top_n], start=1):
-                    code = row.get("stck_shrn_iscd", row.get("mksc_shrn_iscd", ""))
-                    name = row.get("hts_kor_isnm", "")
-                    price = float(row.get("stck_prpr", 0))
-                    change_pct = float(row.get("prdy_ctrt", 0))
-                    
+        output = res.get("output", []) if (res and res.get("rt_cd") == "0") else []
+        
+        # 1차 실패 시 2차 TR (FHPST01740000)
+        if not output:
+            params_alt = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_SCR_DIV_CODE": "16449",
+                "FID_INPUT_ISCD": fid_iscd,
+                "FID_DIV_CLS_CODE": "0",
+                "FID_RANK_SORT_CLS_CODE": rank_sort,
+                "FID_BLNG_CLS_CODE": "0",
+                "FID_TRGT_CLS_CODE": "0",
+                "FID_TRGT_EXLS_CLS_CODE": "0",
+                "FID_INPUT_PRICE_1": "",
+                "FID_INPUT_PRICE_2": "",
+                "FID_VOL_CNT": "",
+                "FID_INPUT_DATE_1": ""
+            }
+            res_alt = call_kis_api(tr_id="FHPST01740000", endpoint="/uapi/domestic-stock/v1/quotations/foreign-institution-daily-ranking", params=params_alt)
+            if res_alt and res_alt.get("rt_cd") == "0":
+                output = res_alt.get("output", [])
+
+        if output:
+            records = []
+            for idx, row in enumerate(output[:top_n], start=1):
+                code = row.get("stck_shrn_iscd", row.get("mksc_shrn_iscd", ""))
+                name = row.get("hts_kor_isnm", "")
+                price = float(row.get("stck_prpr", 0))
+                change_pct = float(row.get("prdy_ctrt", 0))
+                
+                amt_raw = float(row.get("ntby_tr_pbmn", 0))
+                if amt_raw == 0:
                     if investor == "외국인":
                         amt_raw = float(row.get("frgn_pure_bysum", row.get("frgn_ntby_tr_pbmn", 0)))
                         if amt_raw == 0:
-                            qty = float(row.get("frgn_pure_byqty", row.get("frgn_ntby_qty", 0)))
-                            amt_raw = qty * price
+                            amt_raw = float(row.get("frgn_pure_byqty", row.get("frgn_ntby_qty", 0))) * price
                     else:
                         amt_raw = float(row.get("organ_pure_bysum", row.get("orgn_ntby_tr_pbmn", 0)))
                         if amt_raw == 0:
-                            qty = float(row.get("organ_pure_byqty", row.get("orgn_ntby_qty", 0)))
-                            amt_raw = qty * price
+                            amt_raw = float(row.get("organ_pure_byqty", row.get("orgn_ntby_qty", 0))) * price
 
-                    amt_eok = round(amt_raw / 100000000.0, 1) if abs(amt_raw) > 100000 else round(amt_raw, 1)
+                amt_eok = round(amt_raw / 100000000.0, 1) if abs(amt_raw) > 100000 else round(amt_raw, 1)
+                
+                if trade_type == "순매도" and amt_eok > 0:
+                    amt_eok = -amt_eok
                     
-                    if trade_type == "순매도" and amt_eok > 0:
-                        amt_eok = -amt_eok
+                if name and code:
+                    records.append({
+                        "순위": idx,
+                        "종목코드": code,
+                        "종목명": name,
+                        "현재가": price,
+                        "등락률(%)": change_pct,
+                        "순매수대금(억)": amt_eok,
+                        "시가총액_가중": max(price * 1000, 500),
+                        "데이터_출처": f"KIS 증권사 API ({target_date})"
+                    })
+            if records:
+                return pd.DataFrame(records)
+    except Exception as e:
+        logger.warning(f"KIS API 호출 실패: {e}")
+    return pd.DataFrame()
+
+
+# ==============================================================================
+# 3. LS 증권사 API (t1452 및 t1664)
+# ==============================================================================
+def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
+    mkt_code = "1" if "KOSPI" in market.upper() or "코스피" in market else "2"
+    order_code = "1" if trade_type == "순매수" else "2"
+
+    # 1차: t1452 (/stock/market-sum)
+    body_params_1452 = {
+        "t1452InBlock": {
+            "gubun": mkt_code,
+            "jnilgubun": "1",
+            "paygubun": "2",     # 금액 기준
+            "ordergubun": order_code,
+            "cnt": top_n
+        }
+    }
+    try:
+        res = call_ls_api(tr_cd="t1452", tr_url="/stock/market-sum", body_params=body_params_1452)
+        if res and "t1452OutBlock1" in res:
+            data_list = res["t1452OutBlock1"]
+            if data_list:
+                records = []
+                for idx, row in enumerate(data_list[:top_n], start=1):
+                    code = row.get("shcode", "")
+                    name = row.get("hname", "")
+                    price = float(row.get("price", 0))
+                    change_pct = float(row.get("diff", 0))
+                    
+                    val_key = "forval" if investor == "외국인" else "orgval"
+                    svalue = float(row.get(val_key, row.get("svalue", 0)))
+                    net_amt_eok = round(svalue / 100.0, 1) if abs(svalue) > 1000 else round(svalue, 1)
+                    
+                    if trade_type == "순매도" and net_amt_eok > 0:
+                        net_amt_eok = -net_amt_eok
                         
                     if name and code:
                         records.append({
@@ -144,27 +238,19 @@ def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_t
                             "종목명": name,
                             "현재가": price,
                             "등락률(%)": change_pct,
-                            "순매수대금(억)": amt_eok,
+                            "순매수대금(억)": net_amt_eok,
                             "시가총액_가중": max(price * 1000, 500),
-                            "데이터_출처": f"KIS 증권사 API ({target_date})"
+                            "데이터_출처": f"LS 증권사 API ({target_date})"
                         })
                 if records:
                     return pd.DataFrame(records)
-    except Exception as e:
-        logger.warning(f"KIS API 호출 실패: {e}")
-    return pd.DataFrame()
+    except Exception:
+        pass
 
-
-# ==============================================================================
-# 3. LS 증권사 API (t1664 당일매매속보)
-# ==============================================================================
-def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
-    mkt_code = "1" if "KOSPI" in market.upper() or "코스피" in market else "2"
+    # 2차: t1664 (/stock/investor)
     inv_map = {"외국인": "1", "기관": "2", "개인": "3", "투신": "4", "연기금": "7", "금융투자": "5"}
     gubun2 = inv_map.get(investor, "1")
-    order_code = "1" if trade_type == "순매수" else "2"
-
-    body_params = {
+    body_params_1664 = {
         "t1664InBlock": {
             "gubun1": mkt_code,
             "gubun2": gubun2,
@@ -173,7 +259,7 @@ def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_ty
         }
     }
     try:
-        res = call_ls_api(tr_cd="t1664", tr_url="/stock/investor", body_params=body_params)
+        res = call_ls_api(tr_cd="t1664", tr_url="/stock/investor", body_params=body_params_1664)
         if res and "t1664OutBlock1" in res:
             data_list = res["t1664OutBlock1"]
             if data_list:
@@ -355,7 +441,7 @@ def fetch_naver_html_ranking(target_date: str, market: str, investor: str, trade
     sosok = "01" if "KOSPI" in market.upper() or "코스피" in market else "02"
     inv_map = {
         "외국인": "9000",
-        "기관": "1000",
+        "기관": "7000",  # 기관합계 (7000)
         "개인": "8000",
         "연기금": "6000",
         "금융투자": "2000",
@@ -499,31 +585,32 @@ def get_market_radar_scanner(target_date_obj, market: str = "KOSPI", investor: s
         # 1. 당일 조회인 경우 실시간 증권사 API 먼저 시도
         if is_today:
             df = fetch_kis_deal_ranking(search_date_str, market, investor, trade_type, top_n)
-            if not df.empty and len(df) >= 5:
+            if not df.empty and len(df) >= 1:
                 return df
             
             df = fetch_ls_deal_ranking(search_date_str, market, investor, trade_type, top_n)
-            if not df.empty and len(df) >= 5:
+            if not df.empty and len(df) >= 1:
                 return df
 
         # 2. KRX 공식 OpenAPI 시도
         df = fetch_krx_date_deal_ranking(search_date_str, market, investor, trade_type, top_n)
-        if not df.empty and len(df) >= 5:
+        if not df.empty and len(df) >= 1:
             return df
 
         # 3. 실시간 웹 크롤러 (Daum / Naver) 시도
-        df = fetch_daum_deal_ranking(search_date_str, market, investor, trade_type, top_n)
-        if not df.empty and len(df) >= 5:
-            return df
-            
-        df = fetch_naver_html_ranking(search_date_str, market, investor, trade_type, top_n)
-        if not df.empty and len(df) >= 5:
-            return df
+        if is_today:
+            df = fetch_daum_deal_ranking(search_date_str, market, investor, trade_type, top_n)
+            if not df.empty and len(df) >= 1:
+                return df
+                
+            df = fetch_naver_html_ranking(search_date_str, market, investor, trade_type, top_n)
+            if not df.empty and len(df) >= 1:
+                return df
 
         # 4. PyKrx 시도
         if PYKRX_AVAILABLE:
             df = fetch_pykrx_deal_ranking(search_date_str, market, investor, trade_type, top_n)
-            if not df.empty and len(df) >= 5:
+            if not df.empty and len(df) >= 1:
                 return df
 
         # 당일 조회 실패 시 하루 전으로 롤백하여 재탐색
