@@ -15,7 +15,6 @@ def get_secret(key_path: str, default: str = "") -> str:
     """Streamlit Secrets (중첩 섹션 및 단일 키 지원) 및 환경변수 안전 로드"""
     try:
         if hasattr(st, "secrets") and st.secrets:
-            # 1. dot notation 중첩 탐색 (예: "ls.app_key")
             keys = key_path.split(".")
             val = st.secrets
             found = True
@@ -34,7 +33,6 @@ def get_secret(key_path: str, default: str = "") -> str:
             if found and val is not None:
                 return str(val).strip()
 
-            # 2. 단일 키 탐색 (예: "ls_app_key", "LS_APP_KEY", "app_key")
             leaf = keys[-1]
             for candidate in [key_path, key_path.replace(".", "_"), leaf, leaf.lower(), leaf.upper()]:
                 if hasattr(st.secrets, "get") and st.secrets.get(candidate) is not None:
@@ -43,8 +41,6 @@ def get_secret(key_path: str, default: str = "") -> str:
                     return str(st.secrets[candidate]).strip()
     except Exception:
         pass
-    
-    # 3. 환경변수 탐색
     return os.environ.get(key_path, os.environ.get(key_path.replace(".", "_").upper(), default))
 
 
@@ -84,7 +80,7 @@ def get_ls_access_token() -> str:
 
 
 def call_ls_api(tr_cd: str, tr_url: str, body_params: dict) -> dict:
-    """LS증권 TR 실행 공통 함수 (상세 에러 코드 반환 지원)"""
+    """LS증권 TR 실행 공통 함수"""
     app_key = get_secret("ls.app_key", get_secret("LS_APP_KEY", get_secret("ls_app_key", "")))
     app_secret = get_secret("ls.app_secret", get_secret("LS_APP_SECRET", get_secret("ls_app_secret", "")))
 
@@ -93,7 +89,7 @@ def call_ls_api(tr_cd: str, tr_url: str, body_params: dict) -> dict:
 
     token = get_ls_access_token()
     if not token:
-        return {"rsp_msg": "LS OAuth2 토큰 발급 실패 (API Key / Secret 값이 유효하지 않음)"}
+        return {"rsp_msg": "LS OAuth2 토큰 발급 실패 (API Key / Secret 유효성 확인 필요)"}
 
     url = f"{LS_BASE_URL}{tr_url}"
     headers = {
