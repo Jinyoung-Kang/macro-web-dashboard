@@ -25,23 +25,70 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# 1. KIS 증권사 API (외국인/기관 매매상위 전용 TR 패치 완료)
+# [신규] KIS / LS 증권사 API 실시간 연결 상태 테스트 함수
+# ==============================================================================
+def test_kis_connection():
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "V",  # 코스피 기준 테스트
+        "FID_COND_SCR_DIV_CODE": "16449",
+        "FID_INPUT_ISCD": "0000",
+        "FID_DIV_CLS_CODE": "1",
+        "FID_RANK_SORT_CLS_CODE": "0",
+        "FID_BLNG_CLS_CODE": "0",
+        "FID_TRGT_CLS_CODE": "0",
+        "FID_TRGT_EXLS_CLS_CODE": "0",
+        "FID_INPUT_PRICE_1": "",
+        "FID_INPUT_PRICE_2": "",
+        "FID_VOL_CNT": "",
+        "FID_INPUT_DATE_1": ""
+    }
+    try:
+        res = call_kis_api(tr_id="FHPST01710000", endpoint="/uapi/domestic-stock/v1/quotations/foreign-institution-total", params=params)
+        if res and res.get("rt_cd") == "0":
+            return True, f"정상 연결 완료 (응답 코드: 0) / 조회 종목 수: {len(res.get('output', []))}"
+        elif res:
+            return False, f"API 거절 응답: {res.get('msg1', str(res))}"
+        else:
+            return False, "응답 데이터 없음 (API 키 오류 또는 네트워크 차단)"
+    except Exception as e:
+        return False, f"요청 중 예외 발생: {str(e)}"
+
+def test_ls_connection():
+    body_params = {
+        "t1664InBlock": {
+            "gubun1": "1", "gubun2": "1", "gubun3": "1", "cnt": 10
+        }
+    }
+    try:
+        res = call_ls_api(tr_cd="t1664", tr_url="/stock/investor", body_params=body_params)
+        if res and "t1664OutBlock1" in res:
+            return True, f"정상 연결 완료 (응답 블록 확인) / 조회 종목 수: {len(res['t1664OutBlock1'])}"
+        elif res:
+            return False, f"API 거절 응답: {res.get('rsp_msg', str(res))}"
+        else:
+            return False, "응답 데이터 없음 (API 키 오류 또는 네트워크 차단)"
+    except Exception as e:
+        return False, f"요청 중 예외 발생: {str(e)}"
+
+
+# ==============================================================================
+# 1. KIS 증권사 API (외국인/기관 매매상위 전용 TR 파라미터 규격 완벽 패치)
 # ==============================================================================
 def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
-    # KIS API 코스피: 0000, 코스닥: 1000
-    fid_input_iscd = "0000" if "KOSPI" in market.upper() or "코스피" in market else "1000"
+    # KIS API 코스피: V, 코스닥: E
+    mrkt_div = "V" if "KOSPI" in market.upper() or "코스피" in market else "E"
     
     # KIS API 정렬 코드: 0:외인순매수, 1:외인순매도, 2:기관순매수, 3:기관순매도
     if investor == "외국인":
         rank_sort = "0" if trade_type == "순매수" else "1"
-    else:  # 기관, 연기금 등
+    else:
         rank_sort = "2" if trade_type == "순매수" else "3"
     
     params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_MRKT_DIV_CODE": mrkt_div,
         "FID_COND_SCR_DIV_CODE": "16449",
-        "FID_INPUT_ISCD": fid_input_iscd,
-        "FID_DIV_CLS_CODE": "1",  # 1: 금액 기준 정렬
+        "FID_INPUT_ISCD": "0000", # KOSPI/KOSDAQ 무관하게 랭킹 조회시 0000 고정
+        "FID_DIV_CLS_CODE": "1",  # 1: 거래대금 기준
         "FID_RANK_SORT_CLS_CODE": rank_sort,
         "FID_BLNG_CLS_CODE": "0",
         "FID_TRGT_CLS_CODE": "0",
@@ -64,13 +111,13 @@ def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_t
                     price = float(row.get("stck_prpr", 0))
                     change_pct = float(row.get("prdy_ctrt", 0))
                     
-                    # 순매수거래대금 추출 (KIS API는 원 단위 또는 특정 TR에서 백만원/천원 단위 제공)
+                    # 순매수거래대금 추출
                     amt_raw = float(row.get("ntby_tr_pbmn", 0))
                     if amt_raw == 0:
                         qty = float(row.get("ntby_qty", 0))
                         amt_raw = qty * price
                     
-                    # 억원 단위 환산 (금액이 원 단위로 크게 내려올 경우 대비)
+                    # 억원 단위 환산
                     amt_eok = round(amt_raw / 100000000.0, 1) if abs(amt_raw) > 100000 else round(amt_raw, 1)
                     
                     if trade_type == "순매도" and amt_eok > 0:
