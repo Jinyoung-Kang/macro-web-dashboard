@@ -10,16 +10,22 @@ import streamlit as st
 
 logger = logging.getLogger(__name__)
 
+
 def get_secret(key_path: str, default: str = "") -> str:
     """Streamlit Secrets (중첩 섹션 및 단일 키 지원) 및 환경변수 안전 로드"""
     try:
         if hasattr(st, "secrets") and st.secrets:
+            # 1. dot notation 중첩 탐색 (예: "ls.app_key")
             keys = key_path.split(".")
             val = st.secrets
             found = True
             for k in keys:
                 if hasattr(val, "get") and val.get(k) is not None:
                     val = val.get(k)
+                elif hasattr(val, "get") and val.get(k.lower()) is not None:
+                    val = val.get(k.lower())
+                elif hasattr(val, "get") and val.get(k.upper()) is not None:
+                    val = val.get(k.upper())
                 elif hasattr(val, "__getitem__") and k in val:
                     val = val[k]
                 else:
@@ -28,25 +34,30 @@ def get_secret(key_path: str, default: str = "") -> str:
             if found and val is not None:
                 return str(val).strip()
 
+            # 2. 단일 키 탐색 (예: "ls_app_key", "LS_APP_KEY", "app_key")
             leaf = keys[-1]
-            if hasattr(st.secrets, "get") and st.secrets.get(leaf) is not None:
-                return str(st.secrets.get(leaf)).strip()
-            if hasattr(st.secrets, "get") and st.secrets.get(leaf.upper()) is not None:
-                return str(st.secrets.get(leaf.upper())).strip()
+            for candidate in [key_path, key_path.replace(".", "_"), leaf, leaf.lower(), leaf.upper()]:
+                if hasattr(st.secrets, "get") and st.secrets.get(candidate) is not None:
+                    return str(st.secrets.get(candidate)).strip()
+                if hasattr(st.secrets, "__contains__") and candidate in st.secrets:
+                    return str(st.secrets[candidate]).strip()
     except Exception:
         pass
+    
+    # 3. 환경변수 탐색
     return os.environ.get(key_path, os.environ.get(key_path.replace(".", "_").upper(), default))
 
 
-LS_APP_KEY = get_secret("ls.app_key", get_secret("LS_APP_KEY", ""))
-LS_APP_SECRET = get_secret("ls.app_secret", get_secret("LS_APP_SECRET", ""))
+LS_APP_KEY = get_secret("ls.app_key", get_secret("LS_APP_KEY", get_secret("ls_app_key", "")))
+LS_APP_SECRET = get_secret("ls.app_secret", get_secret("LS_APP_SECRET", get_secret("ls_app_secret", "")))
 LS_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
+
 
 @st.cache_data(ttl=18000, show_spinner=False)
 def get_ls_access_token() -> str:
     """LS증권 OAuth 2.0 Access Token 발급 및 캐싱"""
-    app_key = get_secret("ls.app_key", get_secret("LS_APP_KEY", ""))
-    app_secret = get_secret("ls.app_secret", get_secret("LS_APP_SECRET", ""))
+    app_key = get_secret("ls.app_key", get_secret("LS_APP_KEY", get_secret("ls_app_key", "")))
+    app_secret = get_secret("ls.app_secret", get_secret("LS_APP_SECRET", get_secret("ls_app_secret", "")))
     
     if not app_key or not app_secret:
         return ""
@@ -61,22 +72,28 @@ def get_ls_access_token() -> str:
     }
 
     try:
-        res = requests.post(url, headers=headers, data=payload, timeout=8)
+        res = requests.post(url, headers=headers, data=payload, timeout=10)
         if res.status_code == 200:
             data = res.json()
             return data.get("access_token", "")
+        else:
+            logger.warning(f"LS Token 발급 거절 ({res.status_code}): {res.text}")
     except Exception as e:
-        logger.warning(f"LS API Token 발급 실패: {e}")
+        logger.warning(f"LS API Token 발급 예외 발생: {e}")
     return ""
 
 
 def call_ls_api(tr_cd: str, tr_url: str, body_params: dict) -> dict:
-    """LS증권 TR 실행 공통 함수"""
+    """LS증권 TR 실행 공통 함수 (상세 에러 코드 반환 지원)"""
+    app_key = get_secret("ls.app_key", get_secret("LS_APP_KEY", get_secret("ls_app_key", "")))
+    app_secret = get_secret("ls.app_secret", get_secret("LS_APP_SECRET", get_secret("ls_app_secret", "")))
+
+    if not app_key or not app_secret:
+        return {"rsp_msg": "Streamlit Secrets에 'ls.app_key' 또는 'ls_app_key'가 등록되지 않았습니다."}
+
     token = get_ls_access_token()
-    app_key = get_secret("ls.app_key", get_secret("LS_APP_KEY", ""))
-    
-    if not token or not app_key:
-        return {}
+    if not token:
+        return {"rsp_msg": "LS OAuth2 토큰 발급 실패 (API Key / Secret 값이 유효하지 않음)"}
 
     url = f"{LS_BASE_URL}{tr_url}"
     headers = {
@@ -92,6 +109,9 @@ def call_ls_api(tr_cd: str, tr_url: str, body_params: dict) -> dict:
         res = requests.post(url, headers=headers, json=body_params, timeout=10)
         if res.status_code == 200:
             return res.json()
+        
+        err_msg = res.json().get("rsp_msg", f"HTTP {res.status_code}") if res.text else f"HTTP {res.status_code}"
+        return {"rsp_msg": err_msg}
     except Exception as e:
         logger.warning(f"LS TR ({tr_cd}) 호출 실패: {e}")
-    return {}
+        return {"rsp_msg": f"서버 통신 예외: {str(e)}"}
