@@ -24,12 +24,13 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
 # ==============================================================================
-# [신규] KIS / LS 증권사 API 실시간 연결 상태 테스트 함수
+# 1. KIS / LS 증권사 API 실시간 연결 상태 진단 함수
 # ==============================================================================
 def test_kis_connection():
     params = {
-        "FID_COND_MRKT_DIV_CODE": "V",  # 코스피 기준 테스트
+        "FID_COND_MRKT_DIV_CODE": "V",  # 코스피
         "FID_COND_SCR_DIV_CODE": "16449",
         "FID_INPUT_ISCD": "0000",
         "FID_DIV_CLS_CODE": "1",
@@ -45,13 +46,15 @@ def test_kis_connection():
     try:
         res = call_kis_api(tr_id="FHPST01710000", endpoint="/uapi/domestic-stock/v1/quotations/foreign-institution-total", params=params)
         if res and res.get("rt_cd") == "0":
-            return True, f"정상 연결 완료 (응답 코드: 0) / 조회 종목 수: {len(res.get('output', []))}"
+            count = len(res.get("output", []))
+            return True, f"정상 통신 성공 (조회된 상위 종목 수: {count}개)"
         elif res:
-            return False, f"API 거절 응답: {res.get('msg1', str(res))}"
+            return False, f"KIS 서버 응답 에러: {res.get('msg1', str(res))}"
         else:
-            return False, "응답 데이터 없음 (API 키 오류 또는 네트워크 차단)"
+            return False, "KIS 서버 응답 없음"
     except Exception as e:
-        return False, f"요청 중 예외 발생: {str(e)}"
+        return False, f"예외 발생: {str(e)}"
+
 
 def test_ls_connection():
     body_params = {
@@ -62,33 +65,32 @@ def test_ls_connection():
     try:
         res = call_ls_api(tr_cd="t1664", tr_url="/stock/investor", body_params=body_params)
         if res and "t1664OutBlock1" in res:
-            return True, f"정상 연결 완료 (응답 블록 확인) / 조회 종목 수: {len(res['t1664OutBlock1'])}"
+            count = len(res["t1664OutBlock1"])
+            return True, f"정상 통신 성공 (조회된 상위 종목 수: {count}개)"
         elif res:
-            return False, f"API 거절 응답: {res.get('rsp_msg', str(res))}"
+            return False, f"LS 서버 응답 에러: {res.get('rsp_msg', str(res))}"
         else:
-            return False, "응답 데이터 없음 (API 키 오류 또는 네트워크 차단)"
+            return False, "LS 서버 응답 없음"
     except Exception as e:
-        return False, f"요청 중 예외 발생: {str(e)}"
+        return False, f"예외 발생: {str(e)}"
 
 
 # ==============================================================================
-# 1. KIS 증권사 API (외국인/기관 매매상위 전용 TR 파라미터 규격 완벽 패치)
+# 2. KIS 증권사 API (순매수/순매도 전용 TR)
 # ==============================================================================
 def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
-    # KIS API 코스피: V, 코스닥: E
     mrkt_div = "V" if "KOSPI" in market.upper() or "코스피" in market else "E"
     
-    # KIS API 정렬 코드: 0:외인순매수, 1:외인순매도, 2:기관순매수, 3:기관순매도
     if investor == "외국인":
         rank_sort = "0" if trade_type == "순매수" else "1"
-    else:
+    else:  # 기관, 연기금 등
         rank_sort = "2" if trade_type == "순매수" else "3"
     
     params = {
         "FID_COND_MRKT_DIV_CODE": mrkt_div,
         "FID_COND_SCR_DIV_CODE": "16449",
-        "FID_INPUT_ISCD": "0000", # KOSPI/KOSDAQ 무관하게 랭킹 조회시 0000 고정
-        "FID_DIV_CLS_CODE": "1",  # 1: 거래대금 기준
+        "FID_INPUT_ISCD": "0000",
+        "FID_DIV_CLS_CODE": "1",  # 거래대금 기준
         "FID_RANK_SORT_CLS_CODE": rank_sort,
         "FID_BLNG_CLS_CODE": "0",
         "FID_TRGT_CLS_CODE": "0",
@@ -111,19 +113,15 @@ def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_t
                     price = float(row.get("stck_prpr", 0))
                     change_pct = float(row.get("prdy_ctrt", 0))
                     
-                    # 순매수거래대금 추출
                     amt_raw = float(row.get("ntby_tr_pbmn", 0))
                     if amt_raw == 0:
                         qty = float(row.get("ntby_qty", 0))
                         amt_raw = qty * price
                     
-                    # 억원 단위 환산
                     amt_eok = round(amt_raw / 100000000.0, 1) if abs(amt_raw) > 100000 else round(amt_raw, 1)
                     
                     if trade_type == "순매도" and amt_eok > 0:
                         amt_eok = -amt_eok
-                    elif trade_type == "순매도" and amt_eok < 0:
-                        amt_eok = amt_eok
                         
                     if name and code:
                         records.append({
@@ -144,7 +142,7 @@ def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_t
 
 
 # ==============================================================================
-# 2. LS 증권사 API (당일매매속보 t1664 패치 완료)
+# 3. LS 증권사 API (당일매매속보 t1664)
 # ==============================================================================
 def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     gubun1 = "1" if "KOSPI" in market.upper() or "코스피" in market else "2"
@@ -175,7 +173,6 @@ def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_ty
                 price = float(row.get("price", 0))
                 change_pct = float(row.get("diff", 0))
                 
-                # LS API svalue: 순매수대금 (백만원 단위)
                 svalue = float(row.get("svalue", 0))
                 if svalue != 0:
                     net_amt_eok = round(svalue / 100.0, 1)
@@ -205,7 +202,7 @@ def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_ty
 
 
 # ==============================================================================
-# 3. KRX 공식 OpenAPI
+# 4. KRX 공식 OpenAPI
 # ==============================================================================
 def fetch_krx_date_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     auth_key = get_krx_key()
@@ -288,7 +285,7 @@ def fetch_krx_date_deal_ranking(target_date: str, market: str, investor: str, tr
 
 
 # ==============================================================================
-# 4. Daum 실시간 API
+# 5. Daum 실시간 API
 # ==============================================================================
 def fetch_daum_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     market_param = "KOSPI" if "KOSPI" in market.upper() or "코스피" in market else "KOSDAQ"
@@ -342,7 +339,7 @@ def fetch_daum_deal_ranking(target_date: str, market: str, investor: str, trade_
 
 
 # ==============================================================================
-# 5. Naver 실시간 API
+# 6. Naver 실시간 API
 # ==============================================================================
 def fetch_naver_html_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     sosok = "01" if "KOSPI" in market.upper() or "코스피" in market else "02"
@@ -418,7 +415,7 @@ def fetch_naver_html_ranking(target_date: str, market: str, investor: str, trade
 
 
 # ==============================================================================
-# 6. PyKrx 엔진
+# 7. PyKrx 엔진
 # ==============================================================================
 def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     if not PYKRX_AVAILABLE:
@@ -475,14 +472,10 @@ def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade
 
 
 # ==============================================================================
-# 7. 6단계 무중단 파이프라인 마스터 함수 (Smart Fallback)
+# 8. 6단계 무중단 파이프라인 마스터 함수 (Smart Fallback)
 # ==============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def get_market_radar_scanner(target_date_obj, market: str = "KOSPI", investor: str = "외국인", trade_type: str = "순매수", top_n: int = 30) -> pd.DataFrame:
-    """
-    [KIS -> LS -> KRX -> Daum -> Naver -> PyKrx] 순으로 데이터를 수집하며,
-    장중 실시간 및 과거 확정 원장 데이터를 지능적으로 전환하여 무중단 서빙합니다.
-    """
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
     today_str = now_kst.strftime("%Y%m%d")
     
@@ -530,7 +523,7 @@ def get_market_radar_scanner(target_date_obj, market: str = "KOSPI", investor: s
 
 
 # ==============================================================================
-# 8. 기준일(0점) 누적 수급 계산
+# 9. 기준일(0점) 누적 수급 계산
 # ==============================================================================
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_stock_cumulative_flow_from_base(stock_code: str, start_date_obj, end_date_obj) -> pd.DataFrame:
