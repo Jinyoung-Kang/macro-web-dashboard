@@ -33,11 +33,11 @@ def test_kis_connection():
         "FID_COND_MRKT_DIV_CODE": "J",  # KIS 규격: 주식(J) 고정
         "FID_COND_SCR_DIV_CODE": "16449",
         "FID_INPUT_ISCD": "0000",       # 0000: 코스피
-        "FID_DIV_CLS_CODE": "0",
-        "FID_RANK_SORT_CLS_CODE": "0",
+        "FID_DIV_CLS_CODE": "1",        # 1: 금액정렬
+        "FID_RANK_SORT_CLS_CODE": "0",  # 0: 외인순매수
         "FID_BLNG_CLS_CODE": "0",
-        "FID_TRGT_CLS_CODE": "111111111",
-        "FID_TRGT_EXLS_CLS_CODE": "000000",
+        "FID_TRGT_CLS_CODE": "0",       # [수정] 0: 전체 대상 (111111111 제거)
+        "FID_TRGT_EXLS_CLS_CODE": "0",  # [수정] 0: 제외 없음
         "FID_INPUT_PRICE_1": "",
         "FID_INPUT_PRICE_2": "",
         "FID_VOL_CNT": "",
@@ -47,7 +47,10 @@ def test_kis_connection():
         res = call_kis_api(tr_id="FHPST01710000", endpoint="/uapi/domestic-stock/v1/quotations/foreign-institution-total", params=params)
         if res and res.get("rt_cd") == "0":
             count = len(res.get("output", []))
-            return True, f"정상 통신 성공 (조회된 상위 종목 수: {count}개)"
+            if count > 0:
+                return True, f"정상 통신 성공 (조회된 상위 종목 수: {count}개)"
+            else:
+                return False, "통신 성공했으나 조회된 데이터가 0건입니다 (장 운영시간 및 계좌 권한 확인 필요)."
         elif res:
             return False, f"KIS 서버 응답 에러: {res.get('msg1', str(res))}"
         else:
@@ -57,31 +60,20 @@ def test_kis_connection():
 
 
 def test_ls_connection():
-    # 1차 시도: t1452 (순매수 상위)
-    body_params_1452 = {
+    body_params = {
         "t1452InBlock": {
-            "gubun": "1", "jnilgubun": "1", "paygubun": "0", "ordergubun": "1", "cnt": 10
+            "gubun": "1",        # 1: 코스피
+            "jnilgubun": "1",    # 1: 당일
+            "paygubun": "2",     # [수정] 2: 금액 기준 (0 -> 2 수정)
+            "ordergubun": "1",   # 1: 순매수
+            "cnt": 30
         }
     }
     try:
-        res = call_ls_api(tr_cd="t1452", tr_url="/stock/investor", body_params=body_params_1452)
+        res = call_ls_api(tr_cd="t1452", tr_url="/stock/investor", body_params=body_params)
         if res and "t1452OutBlock1" in res and len(res["t1452OutBlock1"]) > 0:
             count = len(res["t1452OutBlock1"])
-            return True, f"정상 통신 성공 (t1452 상위 종목 수: {count}개)"
-    except Exception:
-        pass
-
-    # 2차 시도: t1664 (당일매매속보)
-    body_params_1664 = {
-        "t1664InBlock": {
-            "gubun1": "1", "gubun2": "1", "gubun3": "1", "cnt": 10
-        }
-    }
-    try:
-        res = call_ls_api(tr_cd="t1664", tr_url="/stock/investor", body_params=body_params_1664)
-        if res and "t1664OutBlock1" in res and len(res["t1664OutBlock1"]) > 0:
-            count = len(res["t1664OutBlock1"])
-            return True, f"정상 통신 성공 (t1664 상위 종목 수: {count}개)"
+            return True, f"정상 통신 성공 (조회된 상위 종목 수: {count}개)"
         elif res:
             return False, f"LS 서버 응답 에러: {res.get('rsp_msg', str(res))}"
         else:
@@ -91,21 +83,26 @@ def test_ls_connection():
 
 
 # ==============================================================================
-# 2. KIS 증권사 API (순매수/순매도 전용 TR)
+# 2. KIS 증권사 API (외국인/기관 순매수 상위)
 # ==============================================================================
 def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     fid_iscd = "0000" if "KOSPI" in market.upper() or "코스피" in market else "1001"
-    rank_sort = "0" if trade_type == "순매수" else "1"
+    
+    # 0: 외인순매수, 1: 외인순매도, 2: 기관순매수, 3: 기관순매도
+    if investor == "외국인":
+        rank_sort = "0" if trade_type == "순매수" else "1"
+    else:
+        rank_sort = "2" if trade_type == "순매수" else "3"
     
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",  # KIS 규격: 주식(J) 고정
         "FID_COND_SCR_DIV_CODE": "16449",
         "FID_INPUT_ISCD": fid_iscd,
-        "FID_DIV_CLS_CODE": "0",
+        "FID_DIV_CLS_CODE": "1",        # 1: 금액 기준 정렬
         "FID_RANK_SORT_CLS_CODE": rank_sort,
         "FID_BLNG_CLS_CODE": "0",
-        "FID_TRGT_CLS_CODE": "111111111",
-        "FID_TRGT_EXLS_CLS_CODE": "000000",
+        "FID_TRGT_CLS_CODE": "0",       # [수정] 전체 대상
+        "FID_TRGT_EXLS_CLS_CODE": "0",  # [수정] 제외 없음
         "FID_INPUT_PRICE_1": "",
         "FID_INPUT_PRICE_2": "",
         "FID_VOL_CNT": "",
@@ -159,24 +156,23 @@ def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_t
 
 
 # ==============================================================================
-# 3. LS 증권사 API (t1452 및 t1664 이중화)
+# 3. LS 증권사 API (t1452 실시간 순매수 상위)
 # ==============================================================================
 def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     mkt_code = "1" if "KOSPI" in market.upper() or "코스피" in market else "2"
     order_code = "1" if trade_type == "순매수" else "2"
 
-    # 1차 시도: t1452 (순매수 상위 TR)
-    body_params_1452 = {
+    body_params = {
         "t1452InBlock": {
             "gubun": mkt_code,
             "jnilgubun": "1",
-            "paygubun": "0",
+            "paygubun": "2",     # [수정] 2: 금액 기준
             "ordergubun": order_code,
             "cnt": top_n
         }
     }
     try:
-        res = call_ls_api(tr_cd="t1452", tr_url="/stock/investor", body_params=body_params_1452)
+        res = call_ls_api(tr_cd="t1452", tr_url="/stock/investor", body_params=body_params)
         if res and "t1452OutBlock1" in res:
             data_list = res["t1452OutBlock1"]
             if data_list:
@@ -190,54 +186,6 @@ def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_ty
                     val_key = "forval" if investor == "외국인" else "orgval"
                     svalue = float(row.get(val_key, row.get("svalue", 0)))
                     net_amt_eok = round(svalue / 100.0, 1) if abs(svalue) > 1000 else round(svalue, 1)
-                    if trade_type == "순매도" and net_amt_eok > 0:
-                        net_amt_eok = -net_amt_eok
-                        
-                    if name and code:
-                        records.append({
-                            "순위": idx,
-                            "종목코드": code,
-                            "종목명": name,
-                            "현재가": price,
-                            "등락률(%)": change_pct,
-                            "순매수대금(억)": net_amt_eok,
-                            "시가총액_가중": max(price * 1000, 500),
-                            "데이터_출처": f"LS 증권사 API ({target_date})"
-                        })
-                if records:
-                    return pd.DataFrame(records)
-    except Exception:
-        pass
-
-    # 2차 시도: t1664 (당일매매속보 TR)
-    inv_map = {"외국인": "1", "기관": "2", "개인": "3", "투신": "4", "연기금": "7", "금융투자": "5"}
-    gubun2 = inv_map.get(investor, "1")
-    body_params_1664 = {
-        "t1664InBlock": {
-            "gubun1": mkt_code,
-            "gubun2": gubun2,
-            "gubun3": order_code,
-            "cnt": top_n
-        }
-    }
-    try:
-        res = call_ls_api(tr_cd="t1664", tr_url="/stock/investor", body_params=body_params_1664)
-        if res and "t1664OutBlock1" in res:
-            data_list = res["t1664OutBlock1"]
-            if data_list:
-                records = []
-                for idx, row in enumerate(data_list[:top_n], start=1):
-                    code = row.get("shcode", "")
-                    name = row.get("hname", "")
-                    price = float(row.get("price", 0))
-                    change_pct = float(row.get("diff", 0))
-                    
-                    svalue = float(row.get("svalue", 0))
-                    if svalue != 0:
-                        net_amt_eok = round(svalue / 100.0, 1)
-                    else:
-                        svolume = float(row.get("svolume", row.get("volume", 0)))
-                        net_amt_eok = round((svolume * price) / 100000000.0, 1)
                     
                     if trade_type == "순매도" and net_amt_eok > 0:
                         net_amt_eok = -net_amt_eok
