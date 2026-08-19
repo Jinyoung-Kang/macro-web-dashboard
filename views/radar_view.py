@@ -11,7 +11,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
-from services.radar_service import get_market_radar_scanner, get_stock_cumulative_flow_from_base
+from services.radar_service import (
+    get_market_radar_scanner,
+    get_stock_cumulative_flow_from_base,
+    test_kis_connection,
+    test_ls_connection,
+    PYKRX_AVAILABLE
+)
 
 def render_radar_view():
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
@@ -27,6 +33,29 @@ def render_radar_view():
         </p>
     </div>
     """, unsafe_allow_html=True)
+
+    # ==========================================================================
+    # [신규] KIS / LS 증권사 API 연결 상태 자가 진단 패널
+    # ==========================================================================
+    with st.expander("🛠️ KIS / LS 증권사 API 연결 상태 테스트", expanded=False):
+        st.write("장중 실시간 수급을 제공하는 KIS(한국투자증권) 및 LS증권 API의 작동 및 인증 상태를 점검합니다.")
+        if st.button("🔌 KIS / LS API 테스트 실행"):
+            with st.spinner("KIS API 상태 점검 중..."):
+                k_ok, k_msg = test_kis_connection()
+            with st.spinner("LS API 상태 점검 중..."):
+                l_ok, l_msg = test_ls_connection()
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                if k_ok:
+                    st.success(f"**✅ KIS API:** {k_msg}")
+                else:
+                    st.error(f"**❌ KIS API:** {k_msg}")
+            with c2:
+                if l_ok:
+                    st.success(f"**✅ LS API:** {l_msg}")
+                else:
+                    st.error(f"**❌ LS API:** {l_msg}")
 
     tab1, tab2 = st.tabs(["📊 날짜별 시장 수급 스캐너", "🔍 사용자 지정 기준일(0점) 누적 수급 변화"])
 
