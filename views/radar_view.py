@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
-from services.radar_service import get_market_radar_scanner, get_stock_cumulative_flow_from_base, PYKRX_AVAILABLE
+from services.radar_service import get_market_radar_scanner, get_stock_cumulative_flow_from_base
 
 def render_radar_view():
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
