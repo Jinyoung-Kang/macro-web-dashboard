@@ -9,16 +9,22 @@ import streamlit as st
 
 logger = logging.getLogger(__name__)
 
+
 def get_secret(key_path: str, default: str = "") -> str:
-    """Streamlit Secrets 및 환경변수 안전 로드"""
+    """Streamlit Secrets (중첩 섹션, 대소문자, 단일 키 지원) 및 환경변수 안전 로드"""
     try:
         if hasattr(st, "secrets") and st.secrets:
+            # 1. dot notation 중첩 탐색 (예: "kis.app_key")
             keys = key_path.split(".")
             val = st.secrets
             found = True
             for k in keys:
                 if hasattr(val, "get") and val.get(k) is not None:
                     val = val.get(k)
+                elif hasattr(val, "get") and val.get(k.lower()) is not None:
+                    val = val.get(k.lower())
+                elif hasattr(val, "get") and val.get(k.upper()) is not None:
+                    val = val.get(k.upper())
                 elif hasattr(val, "__getitem__") and k in val:
                     val = val[k]
                 else:
@@ -27,27 +33,32 @@ def get_secret(key_path: str, default: str = "") -> str:
             if found and val is not None:
                 return str(val).strip()
 
+            # 2. 단일 키 탐색 (예: "kis_app_key", "KIS_APP_KEY", "app_key")
             leaf = keys[-1]
-            if hasattr(st.secrets, "get") and st.secrets.get(leaf) is not None:
-                return str(st.secrets.get(leaf)).strip()
-            if hasattr(st.secrets, "get") and st.secrets.get(leaf.upper()) is not None:
-                return str(st.secrets.get(leaf.upper())).strip()
+            for candidate in [key_path, key_path.replace(".", "_"), leaf, leaf.lower(), leaf.upper()]:
+                if hasattr(st.secrets, "get") and st.secrets.get(candidate) is not None:
+                    return str(st.secrets.get(candidate)).strip()
+                if hasattr(st.secrets, "__contains__") and candidate in st.secrets:
+                    return str(st.secrets[candidate]).strip()
     except Exception:
         pass
+    
+    # 3. 환경변수 탐색
     return os.environ.get(key_path, os.environ.get(key_path.replace(".", "_").upper(), default))
 
 
-KIS_APP_KEY = get_secret("kis.app_key", get_secret("KIS_APP_KEY", ""))
-KIS_APP_SECRET = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", ""))
-KIS_CANO = get_secret("kis.cano", get_secret("KIS_CANO", ""))
+KIS_APP_KEY = get_secret("kis.app_key", get_secret("KIS_APP_KEY", get_secret("kis_app_key", "")))
+KIS_APP_SECRET = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", get_secret("kis_app_secret", "")))
+KIS_CANO = get_secret("kis.cano", get_secret("KIS_CANO", get_secret("kis_cano", "")))
 KIS_ACNT_PRDT_CD = get_secret("kis.acnt_prdt_cd", get_secret("KIS_ACNT_PRDT_CD", "01"))
 KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
+
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_kis_access_token() -> str:
     """KIS OAuth 2.0 Access Token 발급 및 캐싱"""
-    app_key = get_secret("kis.app_key", get_secret("KIS_APP_KEY", ""))
-    app_secret = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", ""))
+    app_key = get_secret("kis.app_key", get_secret("KIS_APP_KEY", get_secret("kis_app_key", "")))
+    app_secret = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", get_secret("kis_app_secret", "")))
     
     if not app_key or not app_secret:
         return ""
@@ -60,23 +71,28 @@ def get_kis_access_token() -> str:
     }
 
     try:
-        res = requests.post(url, json=payload, timeout=8)
+        res = requests.post(url, json=payload, timeout=10)
         if res.status_code == 200:
             data = res.json()
             return data.get("access_token", "")
+        else:
+            logger.warning(f"KIS Token 발급 거절 ({res.status_code}): {res.text}")
     except Exception as e:
-        logger.warning(f"KIS Token 발급 실패: {e}")
+        logger.warning(f"KIS Token 발급 예외 발생: {e}")
     return ""
 
 
 def call_kis_api(tr_id: str, endpoint: str, params: dict) -> dict:
-    """KIS API GET 공통 호출기"""
-    token = get_kis_access_token()
-    app_key = get_secret("kis.app_key", get_secret("KIS_APP_KEY", ""))
-    app_secret = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", ""))
+    """KIS API GET 공통 호출기 (상세 에러 코드 반환 지원)"""
+    app_key = get_secret("kis.app_key", get_secret("KIS_APP_KEY", get_secret("kis_app_key", "")))
+    app_secret = get_secret("kis.app_secret", get_secret("KIS_APP_SECRET", get_secret("kis_app_secret", "")))
 
-    if not token or not app_key:
-        return {}
+    if not app_key or not app_secret:
+        return {"rt_cd": "-1", "msg1": "Streamlit Secrets에 'kis.app_key' 또는 'kis_app_key'가 등록되지 않았습니다."}
+
+    token = get_kis_access_token()
+    if not token:
+        return {"rt_cd": "-1", "msg1": "KIS OAuth2 토큰 발급 실패 (API Key / Secret 값이 유효하지 않거나 실전/모의 서버 불일치)"}
 
     url = f"{KIS_BASE_URL}{endpoint}"
     headers = {
@@ -92,9 +108,12 @@ def call_kis_api(tr_id: str, endpoint: str, params: dict) -> dict:
         res = requests.get(url, headers=headers, params=params, timeout=10)
         if res.status_code == 200:
             return res.json()
+        
+        err_msg = res.json().get("msg1", f"HTTP {res.status_code}") if res.text else f"HTTP {res.status_code}"
+        return {"rt_cd": "-1", "msg1": err_msg}
     except Exception as e:
         logger.warning(f"KIS API ({tr_id}) 호출 실패: {e}")
-    return {}
+        return {"rt_cd": "-1", "msg1": f"서버 통신 예외: {str(e)}"}
 
 
 @st.cache_data(ttl=60, show_spinner=False)
