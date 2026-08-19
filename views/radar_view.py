@@ -52,7 +52,7 @@ def render_radar_view():
         df_radar = get_market_radar_scanner(target_date_obj=target_date, market=market_key, investor=investor_sel, trade_type=trade_sel, top_n=top_n)
 
         if df_radar.empty:
-            st.error(f"""
+            st.error("""
             ❌ **최근 7영업일 내 수급 데이터를 찾을 수 없습니다.**
             
             현재 KRX, KIS, LS, Daum, Naver API 서버 통신이 모두 지연되거나 접근이 차단된 상태입니다.
@@ -107,7 +107,9 @@ def render_radar_view():
                 hovertemplate="<b>%{label}</b><br>현재가: %{customdata[1]:,.0f}원<br>등락률: %{customdata[3]:+.2f}%<br>금액: %{customdata[2]:+,.1f}억원"
             )
             fig_tree.update_layout(
-                paper_bgcolor="#0D1117", plot_bgcolor="#161B22", margin=dict(l=10, r=10, t=20, b=10)
+                paper_bgcolor="#0D1117",
+                plot_bgcolor="#161B22",
+                margin=dict(l=10, r=10, t=20, b=10)
             )
             st.plotly_chart(fig_tree, use_container_width=True)
 
@@ -201,8 +203,11 @@ def render_radar_view():
             )
 
             fig_base.update_layout(
-                template="plotly_dark", paper_bgcolor="#0D1117", plot_bgcolor="#161B22",
-                height=620, margin=dict(l=30, r=40, t=50, b=30),
+                template="plotly_dark",
+                paper_bgcolor="#0D1117",
+                plot_bgcolor="#161B22",
+                height=620,
+                margin=dict(l=30, r=40, t=50, b=30),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 hovermode="x unified"
             )
@@ -214,7 +219,8 @@ def render_radar_view():
             with st.expander("📄 기준일 이후 일별 원장 데이터 확인", expanded=False):
                 st.dataframe(
                     df_base_cum.sort_values("Date", ascending=False),
-                    use_container_width=True, hide_index=True
+                    use_container_width=True,
+                    hide_index=True
                 )
         else:
             st.warning("⚠️ 선택하신 기준일부터의 수급 시계열 데이터를 계산할 수 없습니다.")
