@@ -32,10 +32,18 @@ def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_t
     rank_sort = "0" if trade_type == "순매수" else "1"
     
     params = {
-        "FID_COND_MRKT_DIV_CODE": mrkt_div, "FID_COND_SCR_DIV_CODE": "16449",
-        "FID_INPUT_ISCD": "0000", "FID_DIV_CLS_CODE": "0", "FID_RANK_SORT_CLS_CODE": rank_sort,
-        "FID_BLNG_CLS_CODE": "0", "FID_TRGT_CLS_CODE": "111111111", "FID_TRGT_EXLS_CLS_CODE": "000000",
-        "FID_INPUT_PRICE_1": "", "FID_INPUT_PRICE_2": "", "FID_VOL_CNT": "", "FID_INPUT_DATE_1": ""
+        "FID_COND_MRKT_DIV_CODE": mrkt_div,
+        "FID_COND_SCR_DIV_CODE": "16449",
+        "FID_INPUT_ISCD": "0000",
+        "FID_DIV_CLS_CODE": "0",
+        "FID_RANK_SORT_CLS_CODE": rank_sort,
+        "FID_BLNG_CLS_CODE": "0",
+        "FID_TRGT_CLS_CODE": "111111111",
+        "FID_TRGT_EXLS_CLS_CODE": "000000",
+        "FID_INPUT_PRICE_1": "",
+        "FID_INPUT_PRICE_2": "",
+        "FID_VOL_CNT": "",
+        "FID_INPUT_DATE_1": ""
     }
     
     try:
@@ -51,12 +59,18 @@ def fetch_kis_deal_ranking(target_date: str, market: str, investor: str, trade_t
                     change_pct = float(row.get("prdy_ctrt", 0))
                     amt = float(row.get("frgn_pure_bysum", 0)) if investor == "외국인" else float(row.get("organ_pure_bysum", 0))
                     amt_eok = round(amt / 100000000.0, 1)
-                    if trade_type == "순매도" and amt_eok > 0: amt_eok = -amt_eok
+                    if trade_type == "순매도" and amt_eok > 0:
+                        amt_eok = -amt_eok
                         
                     records.append({
-                        "순위": idx, "종목코드": code, "종목명": name, "현재가": price,
-                        "등락률(%)": change_pct, "순매수대금(억)": amt_eok,
-                        "시가총액_가중": max(price * 1000, 500), "데이터_출처": f"KIS 증권사 API ({target_date})"
+                        "순위": idx,
+                        "종목코드": code,
+                        "종목명": name,
+                        "현재가": price,
+                        "등락률(%)": change_pct,
+                        "순매수대금(억)": amt_eok,
+                        "시가총액_가중": max(price * 1000, 500),
+                        "데이터_출처": f"KIS 증권사 API ({target_date})"
                     })
                 return pd.DataFrame(records)
     except Exception as e:
@@ -75,7 +89,10 @@ def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_ty
 
     body_params = {
         "t1664InBlock": {
-            "gubun1": gubun1, "gubun2": gubun2, "gubun3": gubun3, "cnt": top_n
+            "gubun1": gubun1,
+            "gubun2": gubun2,
+            "gubun3": gubun3,
+            "cnt": top_n
         }
     }
 
@@ -101,11 +118,18 @@ def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_ty
                 mcap_est = max(price * 1000, 500)
 
                 records.append({
-                    "순위": rank, "종목코드": code, "종목명": name, "현재가": price,
-                    "등락률(%)": change_pct, "순매수대금(억)": net_amt_eok, "시가총액_가중": mcap_est, "데이터_출처": f"LS 증권사 API ({target_date})"
+                    "순위": rank,
+                    "종목코드": code,
+                    "종목명": name,
+                    "현재가": price,
+                    "등락률(%)": change_pct,
+                    "순매수대금(억)": net_amt_eok,
+                    "시가총액_가중": mcap_est,
+                    "데이터_출처": f"LS 증권사 API ({target_date})"
                 })
                 rank += 1
-                if rank > top_n: break
+                if rank > top_n:
+                    break
             return pd.DataFrame(records)
     except Exception as e:
         logger.warning(f"LS API 호출 실패: {e}")
@@ -117,7 +141,8 @@ def fetch_ls_deal_ranking(target_date: str, market: str, investor: str, trade_ty
 # ==============================================================================
 def fetch_krx_date_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     auth_key = get_krx_key()
-    if not auth_key: return pd.DataFrame()
+    if not auth_key:
+        return pd.DataFrame()
 
     mkt_id = "STK" if "KOSPI" in market.upper() or "코스피" in market else "KSQ"
     url = f"{KRX_BASE_URL}/sto/stk_bydd_trd"
@@ -151,8 +176,10 @@ def fetch_krx_date_deal_ranking(target_date: str, market: str, investor: str, tr
 
                 if name_col and price_col:
                     def safe_float(v):
-                        try: return float(str(v).replace(",", "").strip())
-                        except: return 0.0
+                        try:
+                            return float(str(v).replace(",", "").strip())
+                        except:
+                            return 0.0
 
                     records = []
                     for _, r in df.iterrows():
@@ -168,9 +195,13 @@ def fetch_krx_date_deal_ranking(target_date: str, market: str, investor: str, tr
 
                         if price > 0 and name:
                             records.append({
-                                "종목코드": code, "종목명": name, "현재가": price,
-                                "등락률(%)": fluc, "순매수대금(억)": amt_eok,
-                                "시가총액_가중": price * 1000, "데이터_출처": f"KRX 공식 OpenAPI ({target_date})"
+                                "종목코드": code,
+                                "종목명": name,
+                                "현재가": price,
+                                "등락률(%)": fluc,
+                                "순매수대금(억)": amt_eok,
+                                "시가총액_가중": price * 1000,
+                                "데이터_출처": f"KRX 공식 OpenAPI ({target_date})"
                             })
 
                     if records:
@@ -189,17 +220,24 @@ def fetch_krx_date_deal_ranking(target_date: str, market: str, investor: str, tr
 
 
 # ==============================================================================
-# 4. Daum 실시간 API
+# 4. Daum 실시간 API (보안 헤더 탑재 및 파싱 보강)
 # ==============================================================================
 def fetch_daum_deal_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     market_param = "KOSPI" if "KOSPI" in market.upper() or "코스피" in market else "KOSDAQ"
-    inv_map = {"외국인": "FOREIGN", "기관": "INSTITUTION", "연기금": "PENSION", "금융투자": "FINANCIAL", "투신": "TRUST", "개인": "INDIVIDUAL"}
+    inv_map = {
+        "외국인": "FOREIGN", "기관": "INSTITUTION", "연기금": "PENSION",
+        "금융투자": "FINANCIAL", "투신": "TRUST", "개인": "INDIVIDUAL"
+    }
     inv_param = inv_map.get(investor, "FOREIGN")
     
     action = "top_net_buyers" if trade_type == "순매수" else "top_net_sellers"
     url = f"https://finance.daum.net/api/trend/investors/{action}?market={market_param}&investorType={inv_param}"
     
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.daum.net/trend/investors"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Referer": "https://finance.daum.net/trend/investors",
+        "Accept": "application/json, text/plain, */*"
+    }
 
     try:
         resp = requests.get(url, headers=headers, timeout=6)
@@ -212,15 +250,22 @@ def fetch_daum_deal_ranking(target_date: str, market: str, investor: str, trade_
                     name = row.get("name", "")
                     price = float(row.get("tradePrice", 0))
                     change_pct = float(row.get("changeRate", 0)) * 100.0
-                    if str(row.get("change", "")) == "FALL": change_pct = -abs(change_pct)
+                    if str(row.get("change", "")).upper() in ["FALL", "DROP"]:
+                        change_pct = -abs(change_pct)
                     net_amount = float(row.get("netBuyAmount", row.get("netAmount", 0)))
                     amt_eok = round(abs(net_amount) / 100000000.0, 1)
-                    if trade_type == "순매도": amt_eok = -amt_eok
+                    if trade_type == "순매도":
+                        amt_eok = -abs(amt_eok)
 
                     records.append({
-                        "순위": idx, "종목코드": code, "종목명": name, "현재가": price,
-                        "등락률(%)": round(change_pct, 2), "순매수대금(억)": amt_eok,
-                        "시가총액_가중": max(price * 1000, 500), "데이터_출처": f"Daum 실시간 API ({target_date})"
+                        "순위": idx,
+                        "종목코드": code,
+                        "종목명": name,
+                        "현재가": price,
+                        "등락률(%)": round(change_pct, 2),
+                        "순매수대금(억)": amt_eok,
+                        "시가총액_가중": max(price * 1000, 500),
+                        "데이터_출처": f"Daum 실시간 API ({target_date})"
                     })
                 return pd.DataFrame(records)
     except Exception as e:
@@ -229,17 +274,27 @@ def fetch_daum_deal_ranking(target_date: str, market: str, investor: str, trade_
 
 
 # ==============================================================================
-# 5. Naver 실시간 API (스크래핑 정석 파싱)
+# 5. Naver 실시간 API (type 및 investor_gubun 파라미터 정밀 매핑)
 # ==============================================================================
 def fetch_naver_html_ranking(target_date: str, market: str, investor: str, trade_type: str, top_n: int) -> pd.DataFrame:
     sosok = "01" if "KOSPI" in market.upper() or "코스피" in market else "02"
-    inv_map = {"외국인": "9000", "기관": "7000", "개인": "1000", "연기금": "6000", "금융투자": "2000", "투신": "3000"}
+    inv_map = {
+        "외국인": "9000",
+        "기관": "1000",
+        "개인": "8000",
+        "연기금": "6000",
+        "금융투자": "2000",
+        "투신": "3000"
+    }
     inv_code = inv_map.get(investor, "9000")
-    if trade_type == "순매도":
-        inv_code = str(int(inv_code) + 100)
+    dir_type = "1" if trade_type == "순매수" else "2"
 
-    url = f"https://finance.naver.com/sise/sise_deal_rank.naver?investor_gubun={inv_code}&sosok={sosok}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Referer": "https://finance.naver.com/"}
+    url = f"https://finance.naver.com/sise/sise_deal_rank.naver?investor_gubun={inv_code}&sosok={sosok}&type={dir_type}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Referer": "https://finance.naver.com/sise/",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
 
     try:
         resp = requests.get(url, headers=headers, timeout=8)
@@ -251,30 +306,44 @@ def fetch_naver_html_ranking(target_date: str, market: str, investor: str, trade
                 rank = 1
                 for row in table.find_all("tr"):
                     cols = row.find_all("td")
-                    if len(cols) >= 8:
+                    if len(cols) >= 4:
                         name_tag = cols[1].find("a")
                         if name_tag:
-                            code = re.search(r'code=(\d+)', name_tag.get("href", "")).group(1)
+                            href = name_tag.get("href", "")
+                            code_match = re.search(r'code=(\d+)', href)
+                            if not code_match:
+                                continue
+                            code = code_match.group(1)
                             name = name_tag.text.strip()
                             
                             def clean(x):
-                                try: return float(x.text.replace(",", "").replace("+", "").replace("%", "").strip())
-                                except: return 0.0
+                                try:
+                                    return float(x.text.replace(",", "").replace("+", "").replace("%", "").strip())
+                                except:
+                                    return 0.0
 
                             price = clean(cols[2])
-                            change_pct = clean(cols[4])
-                            net_amt_raw = clean(cols[7])
-                            net_amt_eok = round(net_amt_raw / 100.0, 1)
-                            if trade_type == "순매도": net_amt_eok = -abs(net_amt_eok)
+                            change_pct = clean(cols[4]) if len(cols) > 4 else 0.0
+                            net_amt_raw = clean(cols[7]) if len(cols) >= 8 else clean(cols[3])
+                            net_amt_eok = round(net_amt_raw / 100.0, 1) if net_amt_raw > 1000 else round(net_amt_raw, 1)
+                            if trade_type == "순매도":
+                                net_amt_eok = -abs(net_amt_eok)
 
                             records.append({
-                                "순위": rank, "종목코드": code, "종목명": name, "현재가": price,
-                                "등락률(%)": change_pct, "순매수대금(억)": net_amt_eok,
-                                "시가총액_가중": max(price * 1000, 500), "데이터_출처": f"Naver 실시간 API ({target_date})"
+                                "순위": rank,
+                                "종목코드": code,
+                                "종목명": name,
+                                "현재가": price,
+                                "등락률(%)": change_pct,
+                                "순매수대금(억)": net_amt_eok,
+                                "시가총액_가중": max(price * 1000, 500),
+                                "데이터_출처": f"Naver 실시간 API ({target_date})"
                             })
                             rank += 1
-                            if rank > top_n: break
-                if records: return pd.DataFrame(records)
+                            if rank > top_n:
+                                break
+                if records:
+                    return pd.DataFrame(records)
     except Exception as e:
         logger.warning(f"Naver 스크래핑 실패: {e}")
     return pd.DataFrame()
@@ -293,7 +362,8 @@ def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade
     
     try:
         df = stock.get_market_net_purchases_of_equities_by_ticker(target_date, target_date, mkt, inv)
-        if df.empty: return pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame()
             
         df = df.reset_index().rename(columns={"티커": "종목코드"})
         if trade_type == "순매수":
@@ -301,7 +371,8 @@ def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade
         else:
             df = df[df["순매수거래대금"] < 0].sort_values("순매수거래대금", ascending=True).head(top_n)
             
-        if df.empty: return pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame()
 
         prices_df = stock.get_market_ohlcv(target_date, target_date, mkt)
         
@@ -319,9 +390,14 @@ def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade
                 fluc = float(p_row["등락률"])
             
             records.append({
-                "순위": rank, "종목코드": code, "종목명": name, "현재가": price,
-                "등락률(%)": fluc, "순매수대금(억)": amt_eok,
-                "시가총액_가중": max(price * 1000, 500), "데이터_출처": f"PyKrx API ({target_date})"
+                "순위": rank,
+                "종목코드": code,
+                "종목명": name,
+                "현재가": price,
+                "등락률(%)": fluc,
+                "순매수대금(억)": amt_eok,
+                "시가총액_가중": max(price * 1000, 500),
+                "데이터_출처": f"PyKrx API ({target_date})"
             })
             rank += 1
         return pd.DataFrame(records)
@@ -330,14 +406,14 @@ def fetch_pykrx_deal_ranking(target_date: str, market: str, investor: str, trade
         return pd.DataFrame()
 
 
-# ==============================================
+# ==============================================================================
 # 7. 6단계 무중단 파이프라인 마스터 함수 (Smart Fallback)
-# ==============================================
+# ==============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def get_market_radar_scanner(target_date_obj, market: str = "KOSPI", investor: str = "외국인", trade_type: str = "순매수", top_n: int = 30) -> pd.DataFrame:
     """
-    [KIS -> LS -> KRX -> Daum -> Naver -> PyKrx] 순으로 데이터를 가져오며,
-    오늘 날짜가 아니면 즉시 과거 데이터 최강자인 KRX와 PyKrx를 호출합니다.
+    [KIS -> LS -> KRX -> Daum -> Naver -> PyKrx] 순으로 데이터를 수집하며,
+    장중 실시간 및 과거 확정 원장 데이터를 지능적으로 전환하여 무중단 서빙합니다.
     """
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
     today_str = now_kst.strftime("%Y%m%d")
@@ -349,32 +425,37 @@ def get_market_radar_scanner(target_date_obj, market: str = "KOSPI", investor: s
         search_date_str = current_date_obj.strftime("%Y%m%d")
         is_today = (search_date_str == today_str)
 
-        # 당일 조회인 경우 실시간 증권사 API 먼저 찌르기
+        # 1. 당일 조회인 경우 실시간 증권사 API 먼저 시도
         if is_today:
             df = fetch_kis_deal_ranking(search_date_str, market, investor, trade_type, top_n)
-            if not df.empty: return df
+            if not df.empty and len(df) >= 5:
+                return df
             
             df = fetch_ls_deal_ranking(search_date_str, market, investor, trade_type, top_n)
-            if not df.empty: return df
+            if not df.empty and len(df) >= 5:
+                return df
 
-        # KRX 공식 OpenAPI (과거 데이터 확실함)
+        # 2. KRX 공식 OpenAPI 시도
         df = fetch_krx_date_deal_ranking(search_date_str, market, investor, trade_type, top_n)
-        if not df.empty: return df
+        if not df.empty and len(df) >= 5:
+            return df
 
-        # 당일 데이터 실패 시 웹 기반 실시간 API 백업
-        if is_today:
-            df = fetch_daum_deal_ranking(search_date_str, market, investor, trade_type, top_n)
-            if not df.empty: return df
+        # 3. 실시간 웹 크롤러 (Daum / Naver) 시도
+        df = fetch_daum_deal_ranking(search_date_str, market, investor, trade_type, top_n)
+        if not df.empty and len(df) >= 5:
+            return df
             
-            df = fetch_naver_html_ranking(search_date_str, market, investor, trade_type, top_n)
-            if not df.empty: return df
+        df = fetch_naver_html_ranking(search_date_str, market, investor, trade_type, top_n)
+        if not df.empty and len(df) >= 5:
+            return df
 
-        # 최종 백업: PyKrx
+        # 4. PyKrx 시도
         if PYKRX_AVAILABLE:
             df = fetch_pykrx_deal_ranking(search_date_str, market, investor, trade_type, top_n)
-            if not df.empty: return df
+            if not df.empty and len(df) >= 5:
+                return df
 
-        # 못 찾으면 하루 전으로 롤백하여 재탐색
+        # 당일 조회 실패 시 하루 전으로 롤백하여 재탐색
         current_date_obj -= timedelta(days=1)
 
     return pd.DataFrame()
